@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="apple-touch-icon" href="/static/logo.png">
+  <title>{% block title %}Price Monitor{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --panel2: #273449; --line: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --accent2: #0ea5e9;
+      --ok: #22c55e; --warn: #f59e0b; --blocked: #f97316; --error: #ef4444;
+      --pending: #64748b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 20px 64px; }
+    header.top {
+      display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px;
+      border-bottom: 1px solid var(--line); padding-bottom: 16px;
+    }
+    header.top h1 { font-size: 20px; margin: 0; }
+    header.top h1 a { display: inline-flex; align-items: center; gap: 10px; color: var(--text); }
+    header.top h1 a:hover { text-decoration: none; }
+    header.top .logo { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+    header.top .sub { color: var(--muted); font-size: 13px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 16px;
+    }
+    .btn {
+      display: inline-block; border: 1px solid var(--line); background: var(--panel2);
+      color: var(--text); padding: 7px 12px; border-radius: 8px; font-size: 13px;
+      cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); text-decoration: none; }
+    .btn.primary { background: var(--accent2); border-color: var(--accent2); color: #04121e; font-weight: 600; }
+    .btn.danger:hover { border-color: var(--error); color: #fecaca; }
+    input, select {
+      background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+      padding: 8px 10px; border-radius: 8px; font-size: 14px;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+    .badge {
+      display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px;
+      border-radius: 999px; text-transform: uppercase; letter-spacing: .03em;
+    }
+    .badge.ok { background: rgba(34,197,94,.15); color: var(--ok); }
+    .badge.warn { background: rgba(245,158,11,.15); color: var(--warn); }
+    .badge.blocked { background: rgba(249,115,22,.15); color: var(--blocked); }
+    .badge.error { background: rgba(239,68,68,.15); color: var(--error); }
+    .badge.pending { background: rgba(100,116,139,.2); color: var(--pending); }
+    .muted { color: var(--muted); }
+    .banner {
+      background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.4);
+      color: #fecaca; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px;
+    }
+    .spark { vertical-align: middle; }
+    .price { font-size: 22px; font-weight: 700; }
+    .target-hit { color: var(--ok); font-weight: 600; font-size: 12px; }
+    form.inline { display: inline; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <h1><a href="/"><img class="logo" src="/static/logo.png" alt=""> Price Monitor</a></h1>
+      <span class="sub">{% block subtitle %}{% endblock %}</span>
+    </header>
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ items|length }} item{{ '' if items|length == 1 else 's' }} tracked{% endblock %}
+
+{% block content %}
+  {% if error %}<div class="banner">{{ error }}</div>{% endif %}
+
+  <div class="card" style="margin-bottom: 24px;">
+    <form method="post" action="/items" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+      <div style="flex:1 1 320px;">
+        <label for="url">Product URL</label>
+        <input id="url" name="url" type="url" required placeholder="https://store.example.com/product" style="width:100%;">
+      </div>
+      <div style="width:130px;">
+        <label for="target_price">Target price</label>
+        <input id="target_price" name="target_price" type="number" step="0.01" min="0" placeholder="optional" style="width:100%;">
+      </div>
+      <div style="width:150px;">
+        <label for="interval_minutes">Check every</label>
+        <select id="interval_minutes" name="interval_minutes" style="width:100%;">
+          <option value="360">6 hours</option>
+          <option value="720">12 hours</option>
+          <option value="1440" selected>Daily</option>
+          <option value="4320">3 days</option>
+          <option value="10080">Weekly</option>
+        </select>
+      </div>
+      <button class="btn primary" type="submit">Add &amp; check</button>
+    </form>
+  </div>
+
+  {% if not items %}
+    <div style="text-align:center; padding:32px 0;">
+      <img src="/static/cat.png" alt="" style="width:220px; height:220px; opacity:.95;" onerror="this.style.display='none'">
+      <p class="muted" style="margin-top:8px;">Nothing tracked yet. Paste a product URL above to start monitoring its price.</p>
+    </div>
+  {% endif %}
+
+  <div style="display:flex; flex-direction:column; gap:12px;">
+    {% for row in items %}
+      {% set it = row.item %}
+      {% set label, cls = status_display(it.last_status) %}
+      <div class="card" style="display:flex; gap:16px; align-items:center;">
+        {% if it.image_url %}
+          <img src="{{ it.image_url }}" alt="" style="width:56px; height:56px; object-fit:contain; border-radius:8px; background:#0b1220; flex-shrink:0;">
+        {% else %}
+          <div style="width:56px; height:56px; border-radius:8px; background:#0b1220; display:flex; align-items:center; justify-content:center; color:var(--pending); flex-shrink:0;">?</div>
+        {% endif %}
+
+        <div style="flex:1 1 auto; min-width:0;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <a href="/items/{{ it.id }}" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+            <span class="badge {{ cls }}">{{ label }}</span>
+          </div>
+          <div class="muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.domain }}</div>
+          <div class="muted" style="font-size:12px;">
+            Checked {{ humanize(it.last_checked_at) }} · next {{ humanize(it.next_check_at) }}
+            {% if not it.active %} · <span style="color:var(--warn)">paused</span>{% endif %}
+          </div>
+        </div>
+
+        <div style="text-align:right; flex-shrink:0;">
+          <div class="price">{{ format_price(it.last_price, it.currency) }}</div>
+          {% if row.spark %}{{ row.spark|safe }}{% endif %}
+          {% if row.target_hit %}<div class="target-hit">✓ at/under target</div>{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if usage %}
+    <div class="muted" style="margin-top:28px; font-size:12px; text-align:center;">
+      {% if usage.llm_enabled %}
+        LLM fallback: {{ usage.calls }}{% if usage.cap %} / {{ usage.cap }}{% endif %}
+        call{{ '' if usage.calls == 1 else 's' }} this month ({{ usage.month }}),
+        {{ '{:,}'.format(usage.total_tokens) }} tokens
+        {% if usage.cap_reached %} · <span style="color:var(--warn)">cap reached — fallback paused</span>{% endif %}
+      {% else %}
+        LLM fallback off — heuristics only
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,17 @@
+# Single-service stack. SQLite lives on a named volume so history survives
+# rebuilds. Public exposure on pi5-ai2 is handled by the noBGP proxy (M6).
+services:
+  app:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:///./data/prices.db
+    volumes:
+      - app_data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  app_data:

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title or item.url }} · Price Monitor{% endblock %}
+{% block subtitle %}<a href="/">← all items</a>{% endblock %}
+
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+{% endblock %}
+
+{% block content %}
+  {% set label, cls = status_display(item.last_status) %}
+
+  <div class="card" style="margin-bottom:20px; display:flex; gap:16px; align-items:flex-start;">
+    {% if item.image_url %}
+      <img src="{{ item.image_url }}" alt="" style="width:88px; height:88px; object-fit:contain; border-radius:10px; background:#0b1220;">
+    {% endif %}
+    <div style="flex:1 1 auto; min-width:0;">
+      <h2 style="margin:0 0 6px;">{{ item.title or "Untitled item" }}</h2>
+      <div style="margin-bottom:8px;"><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url }}</a></div>
+      <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+        <span class="price">{{ format_price(item.last_price, item.currency) }}</span>
+        <span class="badge {{ cls }}">{{ label }}</span>
+        {% if item.target_price is not none %}
+          <span class="muted">target {{ format_price(item.target_price, item.currency) }}
+            {% if item.last_price is not none and item.last_price <= item.target_price %}<span class="target-hit">✓ hit</span>{% endif %}
+          </span>
+        {% endif %}
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:8px;">
+        Method: {{ item.extraction_method or "—" }} ·
+        Checked {{ humanize(item.last_checked_at) }} ·
+        Next {{ humanize(item.next_check_at) }} ·
+        {{ points|length }} price point{{ '' if points|length == 1 else 's' }}
+      </div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      <form class="inline" method="post" action="/items/{{ item.id }}/check">
+        <button class="btn primary" type="submit" style="width:100%;">Check now</button>
+      </form>
+      <form class="inline" method="post" action="/items/{{ item.id }}/delete"
+            onsubmit="return confirm('Remove this item and its price history?');">
+        <button class="btn danger" type="submit" style="width:100%;">Remove</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px;">
+    {% if points|length >= 2 %}
+      <canvas id="chart" height="90"></canvas>
+    {% else %}
+      <p class="muted" style="margin:0;">Not enough history to chart yet — need at least two successful checks.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <form method="post" action="/items/{{ item.id }}/settings" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end;">
+      <div style="width:150px;">
+        <label for="target_price">Target price</label>
+        <input id="target_price" name="target_price" type="number" step="0.01" min="0"
+               value="{{ '%.2f'|format(item.target_price) if item.target_price is not none else '' }}"
+               placeholder="none" style="width:100%;">
+      </div>
+      <div style="width:160px;">
+        <label for="interval_minutes">Check every</label>
+        <select id="interval_minutes" name="interval_minutes" style="width:100%;">
+          {% for mins, name in [(360,'6 hours'),(720,'12 hours'),(1440,'Daily'),(4320,'3 days'),(10080,'Weekly')] %}
+            <option value="{{ mins }}" {{ 'selected' if item.interval_minutes == mins else '' }}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="active">Status</label>
+        <select id="active" name="active" style="width:120px;">
+          <option value="true" {{ 'selected' if item.active else '' }}>Active</option>
+          <option value="false" {{ 'selected' if not item.active else '' }}>Paused</option>
+        </select>
+      </div>
+      <button class="btn" type="submit">Save settings</button>
+    </form>
+  </div>
+
+  {% if points|length >= 2 %}
+  <script>
+    const data = {{ chart_data|tojson }};
+    new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: {
+        labels: data.map(p => p.t),
+        datasets: [{
+          label: 'Price',
+          data: data.map(p => p.y),
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,.1)',
+          fill: true, tension: .2, pointRadius: 3,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        scales: {
+          x: { ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true }, grid: { color: '#1e293b' } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  </script>
+  {% endif %}
+{% endblock %}
