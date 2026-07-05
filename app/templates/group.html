@@ -40,7 +40,7 @@
   </div>
 
   <div class="card" style="margin-bottom:20px;">
-    <form method="post" action="/groups/{{ group.id }}/items" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+    <form method="post" action="/groups/{{ group.id }}/items" class="stack-form" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
       <div style="flex:1 1 320px;">
         <label for="url">Add a channel — URL for the same item at another store</label>
         <input id="url" name="url" type="url" required placeholder="https://store.example.com/product" style="width:100%;">
@@ -54,15 +54,15 @@
       {% set it = row.item %}
       {% set label, cls = status_display(it.last_status) %}
       {% set m = match_display(it.match_status) %}
-      <div class="card" style="display:flex; gap:16px; align-items:center;">
+      <div class="card item-card" style="display:flex; gap:16px; align-items:center;">
         {% if it.image_url %}
           <img src="{{ it.image_url }}" alt="" style="width:56px; height:56px; object-fit:contain; border-radius:8px; background:#0b1220; flex-shrink:0;">
         {% else %}
           <div style="width:56px; height:56px; border-radius:8px; background:#0b1220; display:flex; align-items:center; justify-content:center; color:var(--pending); flex-shrink:0;">?</div>
         {% endif %}
-        <div style="flex:1 1 auto; min-width:0;">
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <a href="/items/{{ it.id }}" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+        <div class="item-body" style="flex:1 1 auto; min-width:0;">
+          <div class="item-title-row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <a href="/items/{{ it.id }}" class="item-title" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
             {% if m %}<span class="badge {{ m[1] }}">{{ m[0] }}</span>{% endif %}
             <span class="badge {{ cls }}">{{ label }}</span>
           </div>
@@ -73,7 +73,7 @@
           </div>
           <div class="muted" style="font-size:12px;">Checked {{ humanize(it.last_checked_at) }}</div>
         </div>
-        <div style="text-align:right; flex-shrink:0;">
+        <div class="item-price" style="text-align:right; flex-shrink:0;">
           <div class="price" {% if cheapest and it.id == cheapest.id %}style="color:var(--ok);"{% endif %}>{{ format_price(it.last_price, it.currency) }}</div>
           {% if row.spark %}{{ row.spark|safe }}{% endif %}
           {% if row.target_hit %}

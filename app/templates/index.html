@@ -5,7 +5,7 @@
   {% if error %}<div class="banner">{{ error }}</div>{% endif %}
 
   <div class="card" style="margin-bottom: 24px;">
-    <form method="post" action="/items" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+    <form method="post" action="/items" class="stack-form" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
       <div style="flex:1 1 320px;">
         <label for="url">Product URL</label>
         <input id="url" name="url" type="url" required placeholder="https://store.example.com/product" style="width:100%;">
@@ -61,8 +61,8 @@
               {% set it = row.item %}
               {% set label, cls = status_display(it.last_status) %}
               {% set m = match_display(it.match_status) %}
-              <div style="display:flex; gap:10px; align-items:center; font-size:13px; border-top:1px solid var(--line); padding-top:6px;">
-                <a href="/items/{{ it.id }}" style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+              <div class="group-row" style="display:flex; gap:10px; align-items:center; font-size:13px; border-top:1px solid var(--line); padding-top:6px;">
+                <a href="/items/{{ it.id }}" class="group-row-title" style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
                 <span class="muted" style="flex-shrink:0;">{{ row.domain }}</span>
                 {% if m %}<span class="badge {{ m[1] }}" style="flex-shrink:0;">{{ m[0] }}</span>{% endif %}
                 {% set nb = need_by_display(it.need_by) %}
@@ -81,16 +81,16 @@
     {% for row in items %}
       {% set it = row.item %}
       {% set label, cls = status_display(it.last_status) %}
-      <div class="card" style="display:flex; gap:16px; align-items:center;">
+      <div class="card item-card" style="display:flex; gap:16px; align-items:center;">
         {% if it.image_url %}
           <img src="{{ it.image_url }}" alt="" style="width:56px; height:56px; object-fit:contain; border-radius:8px; background:#0b1220; flex-shrink:0;">
         {% else %}
           <div style="width:56px; height:56px; border-radius:8px; background:#0b1220; display:flex; align-items:center; justify-content:center; color:var(--pending); flex-shrink:0;">?</div>
         {% endif %}
 
-        <div style="flex:1 1 auto; min-width:0;">
-          <div style="display:flex; gap:8px; align-items:center;">
-            <a href="/items/{{ it.id }}" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+        <div class="item-body" style="flex:1 1 auto; min-width:0;">
+          <div class="item-title-row" style="display:flex; gap:8px; align-items:center;">
+            <a href="/items/{{ it.id }}" class="item-title" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
             <span class="badge {{ cls }}">{{ label }}</span>
             {% set nb = need_by_display(it.need_by) %}
             {% if nb %}<span class="badge {{ nb[1] }}">{{ nb[0] }}</span>{% endif %}
@@ -102,7 +102,7 @@
           </div>
         </div>
 
-        <div style="text-align:right; flex-shrink:0;">
+        <div class="item-price" style="text-align:right; flex-shrink:0;">
           <div class="price">{{ format_price(it.last_price, it.currency) }}</div>
           {% if row.spark %}{{ row.spark|safe }}{% endif %}
           {% if row.target_hit %}
