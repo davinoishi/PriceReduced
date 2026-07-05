@@ -34,6 +34,8 @@ templates.env.globals.update(
     format_price=web_helpers.format_price,
     humanize=web_helpers.humanize,
     status_display=web_helpers.status_display,
+    basis_display=web_helpers.basis_display,
+    match_display=web_helpers.match_display,
 )
 
 
@@ -98,6 +100,15 @@ class AddItemRequest(BaseModel):
     target_price: float | None = None
     interval_minutes: int | None = None
     check_now: bool = True
+    group_id: int | None = None
+
+
+class CreateGroupRequest(BaseModel):
+    name: str
+
+
+class AssignGroupRequest(BaseModel):
+    group_id: int | None = None
 
 
 # --- Health ---
@@ -111,29 +122,54 @@ def health() -> dict[str, str]:
 # --- Dashboard (HTML) ---
 
 
+def _item_row(session: Session, item) -> dict:
+    history = services.get_history(session, item.id, ok_only=True)
+    # Same comparability rule as the charts: only points sharing the latest
+    # point's basis and currency, so a basis change can't fake a trend.
+    if history:
+        latest = history[-1]
+        history = [
+            p
+            for p in history
+            if p.price_basis == latest.price_basis and p.currency == latest.currency
+        ]
+    prices = [p.price for p in history][-40:]
+    target_hit = (
+        item.target_price is not None
+        and item.last_price is not None
+        and item.last_price <= item.target_price
+    )
+    return {
+        "item": item,
+        "domain": urlparse(item.url).netloc,
+        "spark": web_helpers.sparkline_svg(prices),
+        "target_hit": target_hit,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, error: str | None = None, session: Session = Depends(get_session)):
-    rows = []
-    for item in services.list_items(session):
-        history = services.get_history(session, item.id, ok_only=True)
-        prices = [p.price for p in history][-40:]
-        target_hit = (
-            item.target_price is not None
-            and item.last_price is not None
-            and item.last_price <= item.target_price
-        )
-        rows.append(
-            {
-                "item": item,
-                "domain": urlparse(item.url).netloc,
-                "spark": web_helpers.sparkline_svg(prices),
-                "target_hit": target_hit,
-            }
-        )
+    rows = [
+        _item_row(session, item)
+        for item in services.list_items(session)
+        if item.group_id is None
+    ]
+    group_rows = []
+    for group in services.list_groups(session):
+        summary = services.group_summary(session, group)
+        summary["member_rows"] = [
+            _item_row(session, member) for member in summary["members"]
+        ]
+        group_rows.append(summary)
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"items": rows, "error": error, "usage": services.llm_usage_summary(session)},
+        {
+            "items": rows,
+            "groups": group_rows,
+            "error": error,
+            "usage": services.llm_usage_summary(session),
+        },
     )
 
 
@@ -162,13 +198,33 @@ def item_detail(item_id: int, request: Request, session: Session = Depends(get_s
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
     points = services.get_history(session, item_id, ok_only=True)
+    # Chart only points comparable with the latest one: same price basis and
+    # currency. Mixing bases (e.g. tax-exclusive vs. -inclusive) or currencies
+    # on one line would fake price movement that never happened.
+    series = points
+    hidden = 0
+    if points:
+        latest = points[-1]
+        series = [
+            p
+            for p in points
+            if p.price_basis == latest.price_basis and p.currency == latest.currency
+        ]
+        hidden = len(points) - len(series)
     chart_data = [
-        {"t": p.checked_at.strftime("%m/%d %H:%M"), "y": p.price} for p in points
+        {"t": p.checked_at.strftime("%m/%d %H:%M"), "y": p.price} for p in series
     ]
     return templates.TemplateResponse(
         request,
         "detail.html",
-        {"item": item, "points": points, "chart_data": chart_data},
+        {
+            "item": item,
+            "points": series,
+            "hidden_points": hidden,
+            "latest_point": points[-1] if points else None,
+            "chart_data": chart_data,
+            "groups": services.list_groups(session),
+        },
     )
 
 
@@ -207,6 +263,100 @@ def web_delete_item(item_id: int, session: Session = Depends(get_session)):
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/items/{item_id}/group")
+def web_assign_group(
+    item_id: int,
+    group_id: str = Form(""),
+    session: Session = Depends(get_session),
+):
+    gid = int(group_id) if group_id.strip() else None
+    try:
+        item = services.assign_item_to_group(session, item_id, gid)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    return RedirectResponse(url=f"/items/{item_id}", status_code=303)
+
+
+# --- Groups (HTML) ---
+
+
+@app.post("/groups")
+def web_create_group(name: str = Form(...), session: Session = Depends(get_session)):
+    try:
+        group = services.create_group(session, name)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse(url=f"/groups/{group.id}", status_code=303)
+
+
+@app.get("/groups/{group_id}", response_class=HTMLResponse)
+def group_detail(group_id: int, request: Request, error: str | None = None, session: Session = Depends(get_session)):
+    group = services.get_group(session, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="group not found")
+    summary = services.group_summary(session, group)
+
+    # One dataset per member over the union of check times, so channels line
+    # up on a shared time axis. Each member charts only points comparable with
+    # its own latest (basis + currency), same rule as the item detail chart.
+    member_series: list[dict] = []
+    times: set = set()
+    for member in summary["members"]:
+        points = services.get_history(session, member.id, ok_only=True)
+        if points:
+            latest = points[-1]
+            points = [
+                p
+                for p in points
+                if p.price_basis == latest.price_basis
+                and p.currency == latest.currency
+            ]
+        series = {p.checked_at: p.price for p in points}
+        times.update(series)
+        member_series.append(
+            {"label": urlparse(member.url).netloc, "points": series}
+        )
+    timeline = sorted(times)
+    chart = {
+        "labels": [t.strftime("%m/%d %H:%M") for t in timeline],
+        "datasets": [
+            {"label": s["label"], "data": [s["points"].get(t) for t in timeline]}
+            for s in member_series
+        ],
+    }
+    summary["member_rows"] = [
+        _item_row(session, member) for member in summary["members"]
+    ]
+    return templates.TemplateResponse(
+        request,
+        "group.html",
+        {**summary, "chart": chart, "error": error},
+    )
+
+
+@app.post("/groups/{group_id}/items")
+def web_group_add_item(
+    group_id: int,
+    url: str = Form(...),
+    session: Session = Depends(get_session),
+):
+    try:
+        services.add_item(session, url, group_id=group_id)
+    except (services.DuplicateItemError, ValueError) as exc:
+        return RedirectResponse(
+            url=f"/groups/{group_id}?error={quote(str(exc))}", status_code=303
+        )
+    return RedirectResponse(url=f"/groups/{group_id}", status_code=303)
+
+
+@app.post("/groups/{group_id}/delete")
+def web_delete_group(group_id: int, session: Session = Depends(get_session)):
+    services.delete_group(session, group_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
 # --- Items ---
 
 
@@ -229,12 +379,69 @@ def api_add_item(payload: AddItemRequest, session: Session = Depends(get_session
             target_price=payload.target_price,
             interval_minutes=payload.interval_minutes,
             check_now=payload.check_now,
+            group_id=payload.group_id,
         )
     except services.DuplicateItemError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"item": item, "first_check": first}
+
+
+# --- Groups (JSON) ---
+
+
+def _group_payload(session: Session, group) -> dict:
+    summary = services.group_summary(session, group)
+    return {
+        "group": summary["group"],
+        "members": summary["members"],
+        "cheapest_item_id": summary["cheapest"].id if summary["cheapest"] else None,
+        "spread": summary["spread"],
+        "mixed_currencies": summary["mixed_currencies"],
+    }
+
+
+@app.get("/api/groups")
+def api_list_groups(session: Session = Depends(get_session)):
+    return [_group_payload(session, g) for g in services.list_groups(session)]
+
+
+@app.post("/api/groups", status_code=201)
+def api_create_group(payload: CreateGroupRequest, session: Session = Depends(get_session)):
+    try:
+        return services.create_group(session, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/groups/{group_id}")
+def api_get_group(group_id: int, session: Session = Depends(get_session)):
+    group = services.get_group(session, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="group not found")
+    return _group_payload(session, group)
+
+
+@app.delete("/api/groups/{group_id}", status_code=204)
+def api_delete_group(group_id: int, session: Session = Depends(get_session)):
+    if not services.delete_group(session, group_id):
+        raise HTTPException(status_code=404, detail="group not found")
+
+
+@app.put("/api/items/{item_id}/group")
+def api_assign_group(
+    item_id: int,
+    payload: AssignGroupRequest,
+    session: Session = Depends(get_session),
+):
+    try:
+        item = services.assign_item_to_group(session, item_id, payload.group_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    return item
 
 
 @app.get("/api/items/{item_id}")

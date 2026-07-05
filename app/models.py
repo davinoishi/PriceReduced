@@ -23,6 +23,24 @@ STATUS_NO_PRICE = "no_price"
 STATUS_BLOCKED = "blocked"
 STATUS_ERROR = "error"
 
+# How confidently a grouped item is the same product as the rest of its group.
+MATCH_VERIFIED = "verified"  # hard identifier (GTIN, or brand+MPN) matches
+MATCH_PROBABLE = "probable"  # titles agree on fuzzy match, no hard identifier
+MATCH_UNASSERTED = "unasserted"  # grouped by the user; nothing to confirm it
+MATCH_MISMATCH = "mismatch"  # hard identifiers disagree — likely a different item
+
+
+class ItemGroup(SQLModel, table=True):
+    """One thing to buy, tracked across multiple channels (its member Items)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    # Canonical product identity, backfilled from the first member that has it.
+    gtin: str | None = None
+    brand: str | None = None
+    mpn: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
 
 class Item(SQLModel, table=True):
     """A product URL the user is tracking."""
@@ -35,6 +53,16 @@ class Item(SQLModel, table=True):
     target_price: float | None = None
     interval_minutes: int = 1440
     active: bool = True
+
+    # Cross-channel grouping: which group (if any) this item belongs to, the
+    # product identity captured from structured data, and how well that
+    # identity matches the group's (a MATCH_* value; None when ungrouped).
+    group_id: int | None = Field(default=None, foreign_key="itemgroup.id", index=True)
+    gtin: str | None = None
+    mpn: str | None = None
+    sku: str | None = None
+    brand: str | None = None
+    match_status: str | None = None
 
     # How the price was last found, cached for reference/optimization.
     extraction_method: str | None = None
@@ -61,6 +89,11 @@ class PricePoint(SQLModel, table=True):
     ok: bool = False
     status: str = STATUS_ERROR
     raw_value: str | None = None
+    # What the price means (e.g. "per_night_inclusive"); None = listed price.
+    # Charts filter to one (basis, currency) pair so series never mix bases.
+    price_basis: str | None = None
+    # The offer variant behind the price (e.g. the room type that was cheapest).
+    variant: str | None = None
     checked_at: datetime = Field(default_factory=utcnow, index=True)
 
 

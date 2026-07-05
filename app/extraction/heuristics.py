@@ -80,6 +80,68 @@ def _best_price(
     return amount, currency
 
 
+# Product-identity keys in schema.org markup, strongest first. GTIN variants
+# (UPC/EAN barcodes) identify the exact SKU; brand+MPN is the fallback pair.
+_GTIN_KEYS = ("gtin13", "gtin12", "gtin14", "gtin8", "gtin")
+
+
+def _identity_str(value: Any) -> str | None:
+    """A usable identity value: non-empty string (or number), else None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = str(value)
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return None
+
+
+def _walk_identity(obj: Any, out: dict[str, str], depth: int = 0) -> None:
+    """Collect gtin/mpn/sku/brand from nested structured data (first hit wins)."""
+    if depth > 8:
+        return
+    if isinstance(obj, dict):
+        if "gtin" not in out:
+            for key in _GTIN_KEYS:
+                gtin = _identity_str(obj.get(key))
+                if gtin:
+                    out["gtin"] = gtin
+                    break
+        for field in ("mpn", "sku"):
+            if field not in out:
+                value = _identity_str(obj.get(field))
+                if value:
+                    out[field] = value
+        if "brand" not in out:
+            brand = obj.get("brand")
+            # schema.org brand is either a string or a Brand object with a name.
+            brand = brand.get("name") if isinstance(brand, dict) else brand
+            brand = _identity_str(brand)
+            if brand:
+                out["brand"] = brand
+        for value in obj.values():
+            _walk_identity(value, out, depth + 1)
+    elif isinstance(obj, list):
+        for entry in obj:
+            _walk_identity(entry, out, depth + 1)
+
+
+def extract_identity(html: str) -> dict[str, str]:
+    """Product identity (gtin/mpn/sku/brand) from JSON-LD or microdata.
+
+    Run independently of the price cascade: identity often lives in structured
+    data even when the price was found by a weaker tier (or the LLM). Used to
+    verify that grouped items are the same product across channels.
+    """
+    try:
+        data = extruct.extract(html, syntaxes=["json-ld", "microdata"], uniform=True)
+    except Exception:  # noqa: BLE001 - malformed markup shouldn't crash a check
+        return {}
+    out: dict[str, str] = {}
+    for syntax in ("json-ld", "microdata"):  # stronger syntax fills first
+        _walk_identity(data.get(syntax, []), out)
+    return out
+
+
 def from_structured_data(html: str) -> ExtractionResult | None:
     """JSON-LD then microdata via extruct (schema.org Product/Offer)."""
     try:

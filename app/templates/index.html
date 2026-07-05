@@ -28,10 +28,46 @@
     </form>
   </div>
 
-  {% if not items %}
+  {% if not items and not groups %}
     <div style="text-align:center; padding:32px 0;">
       <img src="/static/cat.png" alt="" style="width:220px; height:220px; opacity:.95;" onerror="this.style.display='none'">
       <p class="muted" style="margin-top:8px;">Nothing tracked yet. Paste a product URL above to start monitoring its price.</p>
+    </div>
+  {% endif %}
+
+  {% if groups %}
+    <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:24px;">
+      {% for g in groups %}
+        <div class="card">
+          <div style="display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;">
+            <a href="/groups/{{ g.group.id }}" style="font-weight:600; font-size:16px;">{{ g.group.name }}</a>
+            <span class="muted" style="font-size:12px;">{{ g.members|length }} channel{{ '' if g.members|length == 1 else 's' }}</span>
+            {% if g.cheapest %}
+              <span style="margin-left:auto;">
+                Cheapest: <span class="price" style="font-size:16px;">{{ format_price(g.cheapest.last_price, g.cheapest.currency) }}</span>
+                <span class="muted">at {{ g.cheapest.url.split('/')[2] }}</span>
+                {% if g.spread %}<span class="target-hit">save {{ format_price(g.spread, g.cheapest.currency) }} vs. priciest</span>{% endif %}
+              </span>
+            {% elif g.mixed_currencies %}
+              <span class="muted" style="margin-left:auto; font-size:12px;">prices in mixed currencies — not comparable</span>
+            {% endif %}
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+            {% for row in g.member_rows %}
+              {% set it = row.item %}
+              {% set label, cls = status_display(it.last_status) %}
+              {% set m = match_display(it.match_status) %}
+              <div style="display:flex; gap:10px; align-items:center; font-size:13px; border-top:1px solid var(--line); padding-top:6px;">
+                <a href="/items/{{ it.id }}" style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+                <span class="muted" style="flex-shrink:0;">{{ row.domain }}</span>
+                {% if m %}<span class="badge {{ m[1] }}" style="flex-shrink:0;">{{ m[0] }}</span>{% endif %}
+                <span class="badge {{ cls }}" style="flex-shrink:0;">{{ label }}</span>
+                <span style="font-weight:600; flex-shrink:0; {% if g.cheapest and it.id == g.cheapest.id %}color:var(--ok);{% endif %}">{{ format_price(it.last_price, it.currency) }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
     </div>
   {% endif %}
 
@@ -61,10 +97,24 @@
         <div style="text-align:right; flex-shrink:0;">
           <div class="price">{{ format_price(it.last_price, it.currency) }}</div>
           {% if row.spark %}{{ row.spark|safe }}{% endif %}
-          {% if row.target_hit %}<div class="target-hit">✓ at/under target</div>{% endif %}
+          {% if row.target_hit %}
+            <div class="target-hit">✓ at/under target {{ format_price(it.target_price, it.currency) }}</div>
+          {% elif it.target_price is not none %}
+            <div class="muted" style="font-size:12px;">target {{ format_price(it.target_price, it.currency) }}</div>
+          {% endif %}
         </div>
       </div>
     {% endfor %}
+  </div>
+
+  <div class="card" style="margin-top:24px;">
+    <form method="post" action="/groups" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+      <div style="flex:1 1 280px;">
+        <label for="group_name">New group — track one thing across stores (Amazon vs. Walmart vs. …)</label>
+        <input id="group_name" name="name" type="text" required placeholder="e.g. Sony WH-1000XM5 headphones" style="width:100%;">
+      </div>
+      <button class="btn" type="submit">Create group</button>
+    </form>
   </div>
 
   {% if usage %}

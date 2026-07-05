@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
+from difflib import SequenceMatcher
 
 from sqlalchemy import func
 from sqlmodel import Session, col, or_, select
@@ -11,11 +13,16 @@ from sqlmodel import Session, col, or_, select
 from app.config import settings
 from app.extraction import ExtractionResult, extract_price
 from app.models import (
+    MATCH_MISMATCH,
+    MATCH_PROBABLE,
+    MATCH_UNASSERTED,
+    MATCH_VERIFIED,
     STATUS_BLOCKED,
     STATUS_ERROR,
     STATUS_NO_PRICE,
     STATUS_OK,
     Item,
+    ItemGroup,
     LlmCall,
     PricePoint,
     current_month,
@@ -115,6 +122,8 @@ def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePo
         ok=result.found,
         status=status,
         raw_value=result.raw,
+        price_basis=result.price_basis,
+        variant=result.variant,
         checked_at=now,
     )
     session.add(point)
@@ -132,6 +141,20 @@ def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePo
         item.title = result.title
     if result.image_url and not item.image_url:
         item.image_url = result.image_url
+    # Fill-if-empty like title: identity shouldn't flap when a page's markup
+    # comes and goes between checks.
+    for field in ("gtin", "mpn", "sku", "brand"):
+        value = getattr(result, field)
+        if value and not getattr(item, field):
+            setattr(item, field, value)
+
+    if item.group_id is not None:
+        group = session.get(ItemGroup, item.group_id)
+        if group is not None:
+            # A check can surface identity/title the group hasn't seen yet.
+            _backfill_group_identity(group, item)
+            session.add(group)
+            _refresh_group_matches(session, group)
 
     session.add(item)
     session.commit()
@@ -154,24 +177,32 @@ def add_item(
     target_price: float | None = None,
     interval_minutes: int | None = None,
     check_now: bool = True,
+    group_id: int | None = None,
 ) -> tuple[Item, PricePoint | None]:
     """Create a tracked item and (by default) do an immediate first check."""
     url = normalize_url(url)
     existing = session.exec(select(Item).where(Item.url == url)).first()
     if existing is not None:
         raise DuplicateItemError(f"already tracking: {url}")
+    if group_id is not None and session.get(ItemGroup, group_id) is None:
+        raise ValueError(f"no such group: {group_id}")
 
     item = Item(
         url=url,
         target_price=target_price,
         interval_minutes=interval_minutes or settings.default_check_interval_minutes,
         next_check_at=utcnow(),
+        group_id=group_id,
     )
     session.add(item)
     session.commit()
     session.refresh(item)
 
+    # check_item refreshes group identity/verdicts itself; without a first
+    # check the verdicts still need an initial pass.
     first_point = check_item(session, item) if check_now else None
+    if group_id is not None and first_point is None:
+        assign_item_to_group(session, item.id, group_id)
     return item, first_point
 
 
@@ -225,9 +256,200 @@ def delete_item(session: Session, item_id: int) -> bool:
         select(PricePoint).where(PricePoint.item_id == item_id)
     ).all():
         session.delete(point)
+    group_id = item.group_id
     session.delete(item)
     session.commit()
+    # Remaining members' verdicts may have leaned on the deleted item's title.
+    if group_id is not None:
+        group = session.get(ItemGroup, group_id)
+        if group is not None:
+            _refresh_group_matches(session, group)
+            session.commit()
     return True
+
+
+# --- Item groups: one product tracked across multiple channels ---
+
+
+def _norm_gtin(value: str | None) -> str | None:
+    """Digits-only GTIN, left-padded to 14 so UPC-12 and EAN-13 compare equal."""
+    digits = re.sub(r"\D", "", value or "")
+    if 8 <= len(digits) <= 14:
+        return digits.zfill(14)
+    return None
+
+
+def _norm_text(value: str | None) -> str | None:
+    value = re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+    return value or None
+
+
+def _titles_similar(a: str, b: str) -> bool:
+    na, nb = _norm_text(a), _norm_text(b)
+    if not na or not nb:
+        return False
+    tokens_a, tokens_b = set(na.split()), set(nb.split())
+    # Model-number guard: digit-bearing tokens (e.g. "1000xm5") are the most
+    # discriminating part of a product title. If both titles carry them but
+    # share none, they're different models no matter how similar the prose.
+    digits_a = {t for t in tokens_a if any(c.isdigit() for c in t)}
+    digits_b = {t for t in tokens_b if any(c.isdigit() for c in t)}
+    if digits_a and digits_b and not (digits_a & digits_b):
+        return False
+    # Token containment tolerates one retailer's boilerplate-padded title;
+    # the sequence ratio catches near-identical short titles.
+    containment = len(tokens_a & tokens_b) / min(len(tokens_a), len(tokens_b))
+    ratio = SequenceMatcher(None, na, nb).ratio()
+    return max(containment, ratio) >= 0.6
+
+
+def compute_match_status(item: Item, group: ItemGroup, peers: list[Item]) -> str:
+    """How confidently `item` is the same product as its group.
+
+    Hard identifiers decide when both sides have one: GTIN first (variant-safe:
+    color/size/pack each get their own barcode), then MPN (+brand when both
+    carry it). With no comparable identifier, a fuzzy title match against any
+    peer yields "probable"; otherwise the grouping is only the user's word.
+    """
+    item_gtin, group_gtin = _norm_gtin(item.gtin), _norm_gtin(group.gtin)
+    if item_gtin and group_gtin:
+        return MATCH_VERIFIED if item_gtin == group_gtin else MATCH_MISMATCH
+
+    item_mpn, group_mpn = _norm_text(item.mpn), _norm_text(group.mpn)
+    if item_mpn and group_mpn:
+        item_brand, group_brand = _norm_text(item.brand), _norm_text(group.brand)
+        if item_brand and group_brand and item_brand != group_brand:
+            return MATCH_MISMATCH
+        return MATCH_VERIFIED if item_mpn == group_mpn else MATCH_MISMATCH
+
+    for peer in peers:
+        if item.title and peer.title and _titles_similar(item.title, peer.title):
+            return MATCH_PROBABLE
+    return MATCH_UNASSERTED
+
+
+def _backfill_group_identity(group: ItemGroup, item: Item) -> None:
+    """Adopt identity fields the group doesn't have yet from a member."""
+    if not group.gtin and item.gtin:
+        group.gtin = item.gtin
+    if not group.brand and item.brand:
+        group.brand = item.brand
+    if not group.mpn and item.mpn:
+        group.mpn = item.mpn
+
+
+def group_members(session: Session, group_id: int) -> list[Item]:
+    return list(
+        session.exec(
+            select(Item)
+            .where(Item.group_id == group_id)
+            .order_by(col(Item.created_at).asc())
+        ).all()
+    )
+
+
+def _refresh_group_matches(session: Session, group: ItemGroup) -> None:
+    """Recompute every member's match verdict (identity may have just changed)."""
+    members = group_members(session, group.id)
+    for member in members:
+        peers = [m for m in members if m.id != member.id]
+        member.match_status = compute_match_status(member, group, peers)
+        session.add(member)
+
+
+def create_group(session: Session, name: str) -> ItemGroup:
+    name = name.strip()
+    if not name:
+        raise ValueError("group name is empty")
+    group = ItemGroup(name=name)
+    session.add(group)
+    session.commit()
+    session.refresh(group)
+    return group
+
+
+def list_groups(session: Session) -> list[ItemGroup]:
+    return list(
+        session.exec(select(ItemGroup).order_by(col(ItemGroup.created_at).desc())).all()
+    )
+
+
+def get_group(session: Session, group_id: int) -> ItemGroup | None:
+    return session.get(ItemGroup, group_id)
+
+
+def assign_item_to_group(
+    session: Session, item_id: int, group_id: int | None
+) -> Item | None:
+    """Move an item into a group (or out of one, with group_id=None)."""
+    item = session.get(Item, item_id)
+    if item is None:
+        return None
+    old_group_id = item.group_id
+    if group_id is not None:
+        group = session.get(ItemGroup, group_id)
+        if group is None:
+            raise ValueError(f"no such group: {group_id}")
+        item.group_id = group_id
+        _backfill_group_identity(group, item)
+        session.add(group)
+        session.add(item)
+        _refresh_group_matches(session, group)
+    else:
+        item.group_id = None
+        item.match_status = None
+        session.add(item)
+    # Verdicts in the group the item left may depend on its title/identity.
+    if old_group_id is not None and old_group_id != group_id:
+        old_group = session.get(ItemGroup, old_group_id)
+        if old_group is not None:
+            _refresh_group_matches(session, old_group)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+def delete_group(session: Session, group_id: int) -> bool:
+    """Remove a group; members stay tracked, just ungrouped."""
+    group = session.get(ItemGroup, group_id)
+    if group is None:
+        return False
+    for member in group_members(session, group_id):
+        member.group_id = None
+        member.match_status = None
+        session.add(member)
+    session.delete(group)
+    session.commit()
+    return True
+
+
+def group_summary(session: Session, group: ItemGroup) -> dict:
+    """Members plus the cheapest current offer, when honestly comparable.
+
+    "Cheapest" is only computed when every priced member reports the same
+    currency — cross-currency comparison needs FX normalization we don't do.
+    Mismatched members are excluded: their price may be for a different item.
+    """
+    members = group_members(session, group.id)
+    priced = [
+        m
+        for m in members
+        if m.last_price is not None and m.match_status != MATCH_MISMATCH
+    ]
+    currencies = {m.currency for m in priced}
+    cheapest = None
+    spread = None
+    if priced and len(currencies) == 1:
+        cheapest = min(priced, key=lambda m: m.last_price)
+        if len(priced) > 1:
+            spread = max(m.last_price for m in priced) - cheapest.last_price
+    return {
+        "group": group,
+        "members": members,
+        "cheapest": cheapest,
+        "spread": spread,
+        "mixed_currencies": len(currencies) > 1,
+    }
 
 
 def due_items(session: Session) -> list[Item]:
