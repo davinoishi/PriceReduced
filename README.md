@@ -16,7 +16,10 @@ See [PLAN.md](PLAN.md) for the full design and milestones.
 - **Automatic price extraction** from arbitrary product URLs — a tiered cascade
   (site-specific handlers → JSON-LD → microdata → Open Graph/meta → embedded
   JSON → price-flagged elements), with a cheap **LLM fallback** only when
-  heuristics miss.
+  heuristics miss. Prices from the guessy last tier get a **one-time LLM
+  cross-check** when first seen or changed (agreement raises confidence;
+  disagreement defers to the LLM's reading) — unchanged prices never spend
+  a call.
 - **Hotel pricing (Agoda)** — property pages are fully JS-rendered (no price in
   the HTML), so a site handler calls Agoda's own pricing API for the stay dates
   in the URL and tracks the **lowest room price** across all room types, using

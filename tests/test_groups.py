@@ -29,7 +29,7 @@ def session(tmp_path):
 
 
 def _stub(monkeypatch, result: ExtractionResult):
-    monkeypatch.setattr(services, "extract_price", lambda url, use_llm=True: result)
+    monkeypatch.setattr(services, "extract_price", lambda url, **kwargs: result)
 
 
 # --- compute_match_status ---

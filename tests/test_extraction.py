@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from app.extraction import engine
 from app.extraction.engine import extract_from_html
+from app.extraction.llm import reduce_page_text
+from app.extraction.types import ExtractionResult
 
 JSON_LD_PAGE = """
 <html><head>
@@ -170,3 +173,96 @@ def test_identity_captured_even_when_price_came_from_meta():
 def test_no_identity_on_plain_page():
     r = extract_from_html(NO_PRICE_PAGE, use_llm=False)
     assert r.gtin is None and r.mpn is None and r.sku is None and r.brand is None
+
+
+# --- LLM cross-check of regex-tier prices ---
+
+# Regex alone can only find the (wrong) $14.99 here — one price-flagged
+# element, and it's an add-on.
+LONE_ADDON_PRICE_PAGE = """
+<html><body>
+<span class="attach-warranty-price">$14.99</span>
+<div>Apple Magic Trackpad</div>
+</body></html>
+"""
+
+
+def _llm_on(monkeypatch):
+    monkeypatch.setattr(engine.settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(engine.settings, "llm_extraction_enabled", True)
+
+
+def _stub_llm(monkeypatch, result: ExtractionResult | None):
+    """from_llm stub that counts calls; result=None means 'must not be called'."""
+    calls = []
+
+    def fake(html):
+        calls.append(1)
+        assert result is not None, "LLM must not be called in this scenario"
+        return result
+
+    monkeypatch.setattr(engine, "from_llm", fake)
+    return calls
+
+
+def test_cross_check_confirms_regex_price(monkeypatch):
+    _llm_on(monkeypatch)
+    calls = _stub_llm(
+        monkeypatch,
+        ExtractionResult(price=14.99, method="llm", llm_called=True,
+                         llm_total_tokens=100),
+    )
+    r = extract_from_html(LONE_ADDON_PRICE_PAGE)
+    assert calls  # cross-check fired (new price, no reference)
+    assert r.method == "regex" and r.price == 14.99
+    assert r.confidence == 0.7
+    assert r.raw.endswith("llm-confirmed")
+    assert r.llm_called and r.llm_total_tokens == 100  # spend is recorded
+
+
+def test_cross_check_disagreement_prefers_llm(monkeypatch):
+    _llm_on(monkeypatch)
+    _stub_llm(
+        monkeypatch,
+        ExtractionResult(price=159.0, currency="CAD", method="llm",
+                         llm_called=True, confidence=0.6),
+    )
+    r = extract_from_html(LONE_ADDON_PRICE_PAGE)
+    assert r.method == "llm" and r.price == 159.0
+    assert r.hint == "llm:cross-check"
+    assert "14.99" in r.raw  # what regex saw is kept for the audit trail
+
+
+def test_cross_check_skipped_when_price_unchanged(monkeypatch):
+    _llm_on(monkeypatch)
+    _stub_llm(monkeypatch, None)  # any call fails the test
+    r = extract_from_html(LONE_ADDON_PRICE_PAGE, regex_reference=14.99)
+    assert r.method == "regex" and r.price == 14.99
+    assert r.confidence == 0.4 and not r.llm_called
+
+
+def test_cross_check_llm_miss_keeps_regex(monkeypatch):
+    _llm_on(monkeypatch)
+    _stub_llm(monkeypatch, ExtractionResult(method="llm", llm_called=True,
+                                            llm_total_tokens=80))
+    r = extract_from_html(LONE_ADDON_PRICE_PAGE)
+    assert r.method == "regex" and r.price == 14.99
+    assert r.llm_called and r.llm_total_tokens == 80
+
+
+# --- LLM input windowing ---
+
+
+def test_reduce_page_text_prefers_currency_cluster():
+    # A stray early "$" (currency selector) far from the buy box, which
+    # mentions the price three times. The window must land on the cluster.
+    html = (
+        "<html><body>Currency: $ CAD "
+        + "filler word " * 200
+        + "Apple Magic Trackpad $159.00 per unit $159.00 total $159.00 buy now"
+        + " trailer word" * 200
+        + "</body></html>"
+    )
+    reduced = reduce_page_text(html, max_chars=300)
+    assert "$159.00" in reduced
+    assert "Currency: $ CAD" not in reduced
