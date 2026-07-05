@@ -20,14 +20,28 @@ def _format_human(url: str, result) -> str:  # noqa: ANN001 - ExtractionResult
     if result.found:
         price = f"{result.price:.2f}"
         currency = result.currency or "?"
-        return (
-            f"✓ {currency} {price}\n"
-            f"    method     {result.method} (confidence {result.confidence:.2f})\n"
-            f"    hint       {result.hint}\n"
-            f"    raw        {result.raw!r}\n"
-            f"    http       {result.http_status}\n"
-            f"    url        {url}"
+        lines = [
+            f"✓ {currency} {price}",
+            f"    method     {result.method} (confidence {result.confidence:.2f})",
+            f"    hint       {result.hint}",
+            f"    raw        {result.raw!r}",
+        ]
+        if result.price_basis:
+            lines.append(f"    basis      {result.price_basis}")
+        identity = ", ".join(
+            f"{k}={v}"
+            for k, v in (
+                ("gtin", result.gtin),
+                ("mpn", result.mpn),
+                ("sku", result.sku),
+                ("brand", result.brand),
+            )
+            if v
         )
+        if identity:
+            lines.append(f"    identity   {identity}")
+        lines += [f"    http       {result.http_status}", f"    url        {url}"]
+        return "\n".join(lines)
     headline = "⚠ blocked (site rejects automated checks)" if result.blocked else "✗ no price"
     return (
         f"{headline}\n"

@@ -18,7 +18,12 @@
       <div style="margin-bottom:8px;"><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url }}</a></div>
       <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
         <span class="price">{{ format_price(item.last_price, item.currency) }}</span>
+        {% if latest_point and latest_point.price_basis %}
+          <span class="muted" style="font-size:12px;">{{ basis_display(latest_point.price_basis) }}{% if latest_point.variant %} · {{ latest_point.variant }}{% endif %}</span>
+        {% endif %}
         <span class="badge {{ cls }}">{{ label }}</span>
+        {% set m = match_display(item.match_status) %}
+        {% if m %}<span class="badge {{ m[1] }}">{{ m[0] }}</span>{% endif %}
         {% if item.target_price is not none %}
           <span class="muted">target {{ format_price(item.target_price, item.currency) }}
             {% if item.last_price is not none and item.last_price <= item.target_price %}<span class="target-hit">✓ hit</span>{% endif %}
@@ -30,6 +35,9 @@
         Checked {{ humanize(item.last_checked_at) }} ·
         Next {{ humanize(item.next_check_at) }} ·
         {{ points|length }} price point{{ '' if points|length == 1 else 's' }}
+        {% if item.gtin %} · GTIN {{ item.gtin }}{% endif %}
+        {% if item.brand %} · {{ item.brand }}{% endif %}
+        {% if item.mpn %} · MPN {{ item.mpn }}{% endif %}
       </div>
     </div>
     <div style="display:flex; flex-direction:column; gap:8px;">
@@ -48,6 +56,12 @@
       <canvas id="chart" height="90"></canvas>
     {% else %}
       <p class="muted" style="margin:0;">Not enough history to chart yet — need at least two successful checks.</p>
+    {% endif %}
+    {% if hidden_points %}
+      <p class="muted" style="margin:8px 0 0; font-size:12px;">
+        {{ hidden_points }} older point{{ '' if hidden_points == 1 else 's' }} with a
+        different price basis or currency hidden to keep the trend comparable.
+      </p>
     {% endif %}
   </div>
 
@@ -75,6 +89,22 @@
         </select>
       </div>
       <button class="btn" type="submit">Save settings</button>
+    </form>
+
+    <form method="post" action="/items/{{ item.id }}/group" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; margin-top:16px; border-top:1px solid var(--line); padding-top:16px;">
+      <div>
+        <label for="group_id">Group (compare across stores)</label>
+        <select id="group_id" name="group_id" style="width:260px;">
+          <option value="">— none —</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}" {{ 'selected' if item.group_id == g.id else '' }}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn" type="submit">Save group</button>
+      {% if item.group_id %}
+        <a class="btn" href="/groups/{{ item.group_id }}">Open group</a>
+      {% endif %}
     </form>
   </div>
 

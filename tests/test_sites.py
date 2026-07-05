@@ -11,6 +11,9 @@ from app.extraction.sites import (
     find_site_handler,
 )
 
+# Shape mirrors a real GetSecondaryData response (verified live 2026-07):
+# rooms carry tax-exclusive pricing.displayPrice plus richer price views —
+# inclusivePrice (per night, taxes/fees in) and totalPrice (whole stay).
 SECONDARY_DATA = {
     "hotelInfo": {"name": "Royal Plaza Hotel"},
     "currencyInfo": {"code": "USD"},
@@ -18,17 +21,47 @@ SECONDARY_DATA = {
         "masterRooms": [
             {
                 "rooms": [
-                    {"pricing": {"displayPrice": 218.03}},
-                    {"pricing": {"displayPrice": 181.69}},
+                    {
+                        "name": "Plaza Deluxe Family",
+                        "pricing": {"displayPrice": 218.03, "isInclusive": False},
+                        "inclusivePrice": {"display": 246.37, "crossedOut": 900.0},
+                        "totalPrice": {"display": 985.48},
+                    },
+                    {
+                        "name": "Plaza Standard",
+                        "pricing": {"displayPrice": 181.69, "isInclusive": False},
+                        "inclusivePrice": {"display": 205.31, "crossedOut": 821.23},
+                        "totalPrice": {"display": 821.24},
+                    },
                 ]
             },
             {
                 "rooms": [
-                    {"pricing": {"displayPrice": 223.76}},
+                    {
+                        "name": "Plaza Suite",
+                        "pricing": {"displayPrice": 223.76, "isInclusive": False},
+                        "inclusivePrice": {"display": 252.85},
+                        "totalPrice": {"display": 1011.4},
+                    },
                     {"pricing": {"displayPrice": 0}},  # invalid, ignored
                     {"pricing": {}},  # no price, ignored
                 ]
             },
+        ]
+    },
+}
+
+# Older/changed payload shape: only the tax-exclusive display price exists.
+DISPLAY_ONLY_DATA = {
+    "currencyInfo": {"code": "USD"},
+    "roomGridData": {
+        "masterRooms": [
+            {
+                "rooms": [
+                    {"pricing": {"displayPrice": 218.03}},
+                    {"name": "Standard", "pricing": {"displayPrice": 181.69}},
+                ]
+            }
         ]
     },
 }
@@ -43,13 +76,24 @@ PAGE_SNIPPET = (
 )
 
 
-def test_agoda_lowest_room_picks_minimum():
+def test_agoda_lowest_room_prefers_inclusive_price():
     best = _agoda_lowest_room(SECONDARY_DATA)
     assert best is not None
-    price, currency, offers = best
-    assert price == 181.69
-    assert currency == "USD"
-    assert offers == 3  # only offers with a positive price count
+    assert best.price == 205.31  # cheapest inclusive per-night, not 181.69 excl.
+    assert best.currency == "USD"
+    assert best.offers == 3  # only offers with a positive inclusive price count
+    assert best.basis == "per_night_inclusive"
+    assert best.room_name == "Plaza Standard"
+    assert best.total_stay == 821.24
+
+
+def test_agoda_falls_back_to_display_price():
+    best = _agoda_lowest_room(DISPLAY_ONLY_DATA)
+    assert best is not None
+    assert best.price == 181.69
+    assert best.basis == "per_night_display"
+    assert best.room_name == "Standard"
+    assert best.total_stay is None
 
 
 def test_agoda_lowest_room_empty_grid():

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import html as html_lib
 import re
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 from urllib.parse import urlsplit
 
 import httpx
@@ -27,34 +27,82 @@ _AGODA_API_RE = re.compile(
 )
 
 
-def _agoda_lowest_room(data: Any) -> tuple[float, str | None, int] | None:
-    """(lowest price, currency, offer count) from a GetSecondaryData payload.
+# What an Agoda price means. Inclusive = taxes & fees in, the number you'd
+# actually pay per night; display = the room grid's default figure, which for
+# most points of sale EXCLUDES taxes/fees (pricing.isInclusive is false) —
+# the main reason captured prices used to disagree with a browser view.
+BASIS_PER_NIGHT_INCLUSIVE = "per_night_inclusive"
+BASIS_PER_NIGHT_DISPLAY = "per_night_display"
 
-    Room offers live at roomGridData.masterRooms[].rooms[].pricing.displayPrice
-    (the per-night price Agoda's room grid displays). A hotel page lists many
-    room types; for trend tracking we take the cheapest bookable offer.
+
+class _AgodaBest(NamedTuple):
+    price: float
+    currency: str | None
+    offers: int  # how many comparable offers the minimum was taken over
+    basis: str
+    room_name: str | None
+    total_stay: float | None  # whole-stay all-inclusive price, when available
+
+
+def _display_value(room: dict, field: str) -> float | None:
+    """A room's `<field>.display` price, if present and positive."""
+    value = room.get(field)
+    value = value.get("display") if isinstance(value, dict) else None
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
+
+
+def _agoda_lowest_room(data: Any) -> _AgodaBest | None:
+    """Cheapest room offer from a GetSecondaryData payload.
+
+    Offers live at roomGridData.masterRooms[].rooms[]. Each room carries
+    several price views; we prefer `inclusivePrice` (per night, taxes & fees
+    in) and only fall back to the tax-exclusive `pricing.displayPrice` if the
+    payload shape changed. A hotel page lists many room types; for trend
+    tracking we take the cheapest bookable offer.
     """
     grid = (data or {}).get("roomGridData") or {}
-    prices: list[float] = []
+    inclusive: list[tuple[float, str | None, float | None]] = []
+    display: list[tuple[float, str | None]] = []
     for master in grid.get("masterRooms") or []:
         for room in master.get("rooms") or []:
+            name = room.get("name")
+            name = name if isinstance(name, str) and name else None
+            incl = _display_value(room, "inclusivePrice")
+            if incl is not None:
+                inclusive.append((incl, name, _display_value(room, "totalPrice")))
+                continue
             price = (room.get("pricing") or {}).get("displayPrice")
             if isinstance(price, (int, float)) and price > 0:
-                prices.append(float(price))
-    if not prices:
-        return None
+                display.append((float(price), name))
+
     currency = ((data or {}).get("currencyInfo") or {}).get("code")
     currency = currency if isinstance(currency, str) and currency else None
-    return min(prices), currency, len(prices)
+
+    # Never mix bases in one min(): compare inclusive offers against each
+    # other, and use display prices only when no room offered an inclusive one.
+    if inclusive:
+        price, name, total = min(inclusive, key=lambda o: o[0])
+        return _AgodaBest(
+            price, currency, len(inclusive), BASIS_PER_NIGHT_INCLUSIVE, name, total
+        )
+    if display:
+        price, name = min(display, key=lambda o: o[0])
+        return _AgodaBest(
+            price, currency, len(display), BASIS_PER_NIGHT_DISPLAY, name, None
+        )
+    return None
 
 
 def extract_agoda(url: str) -> ExtractionResult | None:
-    """Lowest room price for the stay encoded in an Agoda property URL.
+    """Lowest tax-inclusive room price for the stay encoded in an Agoda URL.
 
     Loads the page once to establish session cookies and to discover the
     pricing-API URL, then calls that API with the same session. Currency
-    follows the server-side session (Agoda ignores currency hints without a
-    real browser session), but it is recorded with every price point and is
+    follows the server-side session and cannot be pinned over plain HTTP
+    (Agoda stores it against the session id; URL params and price cookies are
+    ignored — verified live), so it is recorded with every price point and is
     stable when checks always run from the same host.
     """
     method = "agoda-api"
@@ -109,14 +157,21 @@ def extract_agoda(url: str) -> ExtractionResult | None:
             error="no room offers returned (sold out for these dates?)",
             title=hotel if isinstance(hotel, str) else None,
         )
-    price, currency, offers = best
+
+    raw_parts = [f"lowest of {best.offers} room offer(s)"]
+    if best.room_name:
+        raw_parts.insert(0, best.room_name)
+    if best.total_stay is not None:
+        raw_parts.append(f"{best.total_stay:.2f} total stay incl. taxes/fees")
     return ExtractionResult(
-        price=price,
-        currency=currency,
+        price=best.price,
+        currency=best.currency,
         method=method,
+        price_basis=best.basis,
+        variant=best.room_name,
         hint="agoda:lowest-room",
         confidence=0.85,
-        raw=f"lowest of {offers} room offer(s)",
+        raw=" · ".join(raw_parts),
         http_status=resp.status_code,
         title=hotel if isinstance(hotel, str) else None,
     )

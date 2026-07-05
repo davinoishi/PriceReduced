@@ -19,8 +19,21 @@ See [PLAN.md](PLAN.md) for the full design and milestones.
   heuristics miss.
 - **Hotel pricing (Agoda)** — property pages are fully JS-rendered (no price in
   the HTML), so a site handler calls Agoda's own pricing API for the stay dates
-  in the URL and tracks the **lowest room price** across all room types.
-  Currency follows the server-side session and is recorded with each point.
+  in the URL and tracks the **lowest room price** across all room types, using
+  the **per-night, taxes-&-fees-included** figure (the site's default display
+  price excludes taxes, which is why scraped prices used to disagree with a
+  browser). Each price point records its **basis**, the winning room type, and
+  the currency (which follows the server-side session — Agoda ignores currency
+  hints without a real browser session); charts only mix points sharing the
+  same basis + currency.
+- **Item groups (cheapest channel)** — group URLs for the same product across
+  stores (Amazon vs. Walmart vs. …) and the dashboard shows the **cheapest
+  current offer** and the spread vs. the priciest channel. Product identity
+  (GTIN/MPN/brand from schema.org markup) is captured automatically and every
+  member gets an honesty badge: *Same item ✓* (barcode/part-number match),
+  *Probable match* (titles agree, model-number-aware), *Unverified* (your word
+  only), or *Identity mismatch* (hard identifiers disagree — excluded from
+  "cheapest").
 - **Scheduled checks** (per-item interval, default daily) via an in-process
   background sweep — no external scheduler.
 - **Price history** retained until you remove the item, with a chart per item
@@ -69,11 +82,16 @@ embedded-json, regex, or llm), and a confidence score — without touching the D
 |--------|------|---------|
 | GET  | `/health` | Health check (always open) |
 | GET  | `/api/items` | List tracked items |
-| POST | `/api/items` | Add `{url, target_price?, interval_minutes?}` (checks immediately) |
+| POST | `/api/items` | Add `{url, target_price?, interval_minutes?, group_id?}` (checks immediately) |
 | GET  | `/api/items/{id}` | Get one item |
 | GET  | `/api/items/{id}/history` | Price history (`?ok_only=true` for successful checks) |
 | POST | `/api/items/{id}/check` | Check now |
+| PUT  | `/api/items/{id}/group` | Move item into/out of a group `{group_id}` |
 | DELETE | `/api/items/{id}` | Remove item + its history |
+| GET  | `/api/groups` | List groups with members + cheapest offer |
+| POST | `/api/groups` | Create a group `{name}` |
+| GET  | `/api/groups/{id}` | One group with members + cheapest offer |
+| DELETE | `/api/groups/{id}` | Remove group (members stay, ungrouped) |
 | GET  | `/api/llm-usage` | LLM calls/tokens this month vs. the cap |
 
 ## Configuration

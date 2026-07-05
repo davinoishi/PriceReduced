@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{{ group.name }} · Price Monitor{% endblock %}
+{% block subtitle %}<a href="/">← all items</a>{% endblock %}
+
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+{% endblock %}
+
+{% block content %}
+  {% if error %}<div class="banner">{{ error }}</div>{% endif %}
+
+  <div class="card" style="margin-bottom:20px;">
+    <div style="display:flex; gap:16px; align-items:flex-start;">
+      <div style="flex:1 1 auto; min-width:0;">
+        <h2 style="margin:0 0 6px;">{{ group.name }}</h2>
+        <div class="muted" style="font-size:12px;">
+          {{ members|length }} channel{{ '' if members|length == 1 else 's' }}
+          {% if group.gtin %} · GTIN {{ group.gtin }}{% endif %}
+          {% if group.brand %} · {{ group.brand }}{% endif %}
+          {% if group.mpn %} · MPN {{ group.mpn }}{% endif %}
+        </div>
+        {% if cheapest %}
+          <div style="margin-top:10px;">
+            Cheapest now:
+            <span class="price">{{ format_price(cheapest.last_price, cheapest.currency) }}</span>
+            at <a href="{{ cheapest.url }}" target="_blank" rel="noopener">{{ cheapest.url.split('/')[2] }}</a>
+            {% if spread %}<span class="target-hit" style="margin-left:8px;">save {{ format_price(spread, cheapest.currency) }} vs. priciest channel</span>{% endif %}
+          </div>
+        {% elif mixed_currencies %}
+          <div class="muted" style="margin-top:10px; font-size:13px;">
+            Channels report different currencies — cheapest not computed (needs FX normalization).
+          </div>
+        {% endif %}
+      </div>
+      <form class="inline" method="post" action="/groups/{{ group.id }}/delete"
+            onsubmit="return confirm('Remove this group? Its items stay tracked, just ungrouped.');">
+        <button class="btn danger" type="submit">Remove group</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px;">
+    <form method="post" action="/groups/{{ group.id }}/items" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+      <div style="flex:1 1 320px;">
+        <label for="url">Add a channel — URL for the same item at another store</label>
+        <input id="url" name="url" type="url" required placeholder="https://store.example.com/product" style="width:100%;">
+      </div>
+      <button class="btn primary" type="submit">Add &amp; check</button>
+    </form>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;">
+    {% for row in member_rows %}
+      {% set it = row.item %}
+      {% set label, cls = status_display(it.last_status) %}
+      {% set m = match_display(it.match_status) %}
+      <div class="card" style="display:flex; gap:16px; align-items:center;">
+        {% if it.image_url %}
+          <img src="{{ it.image_url }}" alt="" style="width:56px; height:56px; object-fit:contain; border-radius:8px; background:#0b1220; flex-shrink:0;">
+        {% else %}
+          <div style="width:56px; height:56px; border-radius:8px; background:#0b1220; display:flex; align-items:center; justify-content:center; color:var(--pending); flex-shrink:0;">?</div>
+        {% endif %}
+        <div style="flex:1 1 auto; min-width:0;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <a href="/items/{{ it.id }}" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
+            {% if m %}<span class="badge {{ m[1] }}">{{ m[0] }}</span>{% endif %}
+            <span class="badge {{ cls }}">{{ label }}</span>
+          </div>
+          <div class="muted" style="font-size:12px;">{{ row.domain }}
+            {% if it.gtin %} · GTIN {{ it.gtin }}{% endif %}
+            {% if it.brand %} · {{ it.brand }}{% endif %}
+            {% if it.mpn %} · MPN {{ it.mpn }}{% endif %}
+          </div>
+          <div class="muted" style="font-size:12px;">Checked {{ humanize(it.last_checked_at) }}</div>
+        </div>
+        <div style="text-align:right; flex-shrink:0;">
+          <div class="price" {% if cheapest and it.id == cheapest.id %}style="color:var(--ok);"{% endif %}>{{ format_price(it.last_price, it.currency) }}</div>
+          {% if row.spark %}{{ row.spark|safe }}{% endif %}
+          {% if row.target_hit %}
+            <div class="target-hit">✓ at/under target {{ format_price(it.target_price, it.currency) }}</div>
+          {% elif it.target_price is not none %}
+            <div class="muted" style="font-size:12px;">target {{ format_price(it.target_price, it.currency) }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    {% if chart.labels|length >= 2 %}
+      <canvas id="chart" height="90"></canvas>
+    {% else %}
+      <p class="muted" style="margin:0;">Not enough history to chart yet — need at least two successful checks.</p>
+    {% endif %}
+  </div>
+
+  {% if chart.labels|length >= 2 %}
+  <script>
+    const chart = {{ chart|tojson }};
+    const colors = ['#38bdf8', '#f472b6', '#a3e635', '#fbbf24', '#c084fc', '#34d399'];
+    new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: {
+        labels: chart.labels,
+        datasets: chart.datasets.map((d, i) => ({
+          ...d,
+          borderColor: colors[i % colors.length],
+          backgroundColor: 'transparent',
+          spanGaps: true, tension: .2, pointRadius: 3,
+        }))
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        scales: {
+          x: { ticks: { color: '#94a3b8', maxRotation: 0, autoSkip: true }, grid: { color: '#1e293b' } },
+          y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+        },
+        plugins: { legend: { display: true, labels: { color: '#e2e8f0' } } }
+      }
+    });
+  </script>
+  {% endif %}
+{% endblock %}

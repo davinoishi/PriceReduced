@@ -5,6 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.models import (
+    MATCH_MISMATCH,
+    MATCH_PROBABLE,
+    MATCH_UNASSERTED,
+    MATCH_VERIFIED,
     STATUS_BLOCKED,
     STATUS_ERROR,
     STATUS_NO_PRICE,
@@ -58,6 +62,34 @@ def status_display(status: str | None) -> tuple[str, str]:
     if status is None:
         return ("Pending", "pending")
     return _STATUS_DISPLAY.get(status, (status, "pending"))
+
+
+_BASIS_DISPLAY = {
+    "per_night_inclusive": "per night, taxes & fees included",
+    "per_night_display": "per night, site display price (may exclude taxes)",
+}
+
+
+def basis_display(basis: str | None) -> str | None:
+    """Human label for a price basis; None for plain listed prices."""
+    if basis is None:
+        return None
+    return _BASIS_DISPLAY.get(basis, basis.replace("_", " "))
+
+
+_MATCH_DISPLAY = {
+    MATCH_VERIFIED: ("Same item ✓", "ok"),
+    MATCH_PROBABLE: ("Probable match", "warn"),
+    MATCH_UNASSERTED: ("Unverified", "pending"),
+    MATCH_MISMATCH: ("Identity mismatch", "error"),
+}
+
+
+def match_display(status: str | None) -> tuple[str, str] | None:
+    """(label, css-class) for a group-match verdict; None when ungrouped."""
+    if status is None:
+        return None
+    return _MATCH_DISPLAY.get(status, (status, "pending"))
 
 
 def sparkline_svg(prices: list[float | None], width: int = 140, height: int = 32) -> str:

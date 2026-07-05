@@ -47,6 +47,30 @@ PRICE_ELEMENT_PAGE = """
 
 NO_PRICE_PAGE = "<html><body><p>Just an article, no price here.</p></body></html>"
 
+IDENTITY_PAGE = """
+<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Product","name":"WH-1000XM5",
+ "gtin13":"4548736132579","mpn":"WH1000XM5/B","sku":"6505725",
+ "brand":{"@type":"Brand","name":"Sony"},
+ "offers":{"@type":"Offer","price":"399.99","priceCurrency":"USD"}}
+</script>
+</head><body></body></html>
+"""
+
+# Price only findable via meta tags, identity only via JSON-LD — identity
+# capture must not depend on which tier won the price.
+IDENTITY_WITHOUT_STRUCTURED_PRICE = """
+<html><head>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Product","name":"Widget",
+ "gtin12":"012345678905","brand":"Acme"}
+</script>
+<meta property="product:price:amount" content="34.00">
+<meta property="product:price:currency" content="EUR">
+</head><body></body></html>
+"""
+
 
 def test_json_ld_offer():
     r = extract_from_html(JSON_LD_PAGE, use_llm=False)
@@ -91,3 +115,24 @@ def test_no_price():
     assert not r.found
     assert r.method == "none"
     assert r.error
+
+
+def test_identity_captured_from_json_ld():
+    r = extract_from_html(IDENTITY_PAGE, use_llm=False)
+    assert r.found and r.price == 399.99
+    assert r.gtin == "4548736132579"
+    assert r.mpn == "WH1000XM5/B"
+    assert r.sku == "6505725"
+    assert r.brand == "Sony"  # Brand object flattened to its name
+
+
+def test_identity_captured_even_when_price_came_from_meta():
+    r = extract_from_html(IDENTITY_WITHOUT_STRUCTURED_PRICE, use_llm=False)
+    assert r.found and r.method == "meta"
+    assert r.gtin == "012345678905"
+    assert r.brand == "Acme"
+
+
+def test_no_identity_on_plain_page():
+    r = extract_from_html(NO_PRICE_PAGE, use_llm=False)
+    assert r.gtin is None and r.mpn is None and r.sku is None and r.brand is None

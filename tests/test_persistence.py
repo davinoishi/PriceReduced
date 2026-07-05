@@ -45,6 +45,37 @@ def test_add_item_records_first_price(session, monkeypatch):
     assert first is not None and first.price == 19.99
 
 
+def test_price_basis_and_variant_recorded(session, monkeypatch):
+    _stub(
+        monkeypatch,
+        ExtractionResult(
+            price=205.31, currency="USD", method="agoda-api", http_status=200,
+            price_basis="per_night_inclusive", variant="Plaza Standard",
+        ),
+    )
+    _, first = services.add_item(session, "https://agoda.test/hotel")
+    assert first.price_basis == "per_night_inclusive"
+    assert first.variant == "Plaza Standard"
+
+
+def test_identity_fields_fill_once(session, monkeypatch):
+    _stub(
+        monkeypatch,
+        ExtractionResult(
+            price=10.0, method="json-ld", http_status=200,
+            gtin="4548736132579", brand="Sony", mpn="X/1", sku="123",
+        ),
+    )
+    item, _ = services.add_item(session, "https://shop.test/id")
+    assert item.gtin == "4548736132579"
+
+    # A later check with no markup must not blank the captured identity.
+    _stub(monkeypatch, ExtractionResult(price=11.0, method="regex", http_status=200))
+    services.check_item(session, item)
+    assert item.gtin == "4548736132579"
+    assert item.brand == "Sony"
+
+
 def test_duplicate_url_rejected(session, monkeypatch):
     _stub(monkeypatch, ExtractionResult(price=5.0, method="meta", http_status=200))
     services.add_item(session, "https://shop.test/a")

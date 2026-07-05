@@ -17,6 +17,12 @@ class ExtractionResult:
     price: float | None = None
     currency: str | None = None
     method: str = "none"
+    # What the price means when it isn't a plain listed price (e.g. Agoda's
+    # "per_night_inclusive"). None = the sticker price as shown. Recorded per
+    # price point so series with different bases are never charted together.
+    price_basis: str | None = None
+    # The offer variant behind the price (e.g. the room type that was cheapest).
+    variant: str | None = None
     # A short, reusable hint about *where* the price was found (e.g. a CSS
     # selector or a JSON key path) so a future check can be deterministic.
     hint: str | None = None
@@ -31,6 +37,12 @@ class ExtractionResult:
     # Page metadata, captured opportunistically for the dashboard.
     title: str | None = None
     image_url: str | None = None
+    # Product identity from structured data (schema.org Product), captured for
+    # cross-channel matching regardless of which tier found the price.
+    gtin: str | None = None
+    mpn: str | None = None
+    sku: str | None = None
+    brand: str | None = None
     # LLM telemetry — set when the OpenRouter fallback was actually invoked,
     # so the caller can record usage and enforce the monthly cap.
     llm_called: bool = False

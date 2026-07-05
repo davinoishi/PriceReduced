@@ -6,7 +6,7 @@ from selectolax.parser import HTMLParser
 
 from app.config import settings
 from app.extraction.fetcher import fetch
-from app.extraction.heuristics import HEURISTICS
+from app.extraction.heuristics import HEURISTICS, extract_identity
 from app.extraction.llm import from_llm
 from app.extraction.sites import find_site_handler
 from app.extraction.types import ExtractionResult
@@ -70,6 +70,14 @@ def extract_from_html(html: str, *, use_llm: bool = True) -> ExtractionResult:
     title, image = _page_meta(html)
     result.title = title
     result.image_url = image
+
+    # Product identity for cross-channel matching, independent of which tier
+    # (if any) found the price.
+    identity = extract_identity(html)
+    result.gtin = identity.get("gtin")
+    result.mpn = identity.get("mpn")
+    result.sku = identity.get("sku")
+    result.brand = identity.get("brand")
     return result
 
 
