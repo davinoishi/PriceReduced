@@ -220,6 +220,19 @@ def test_cross_check_confirms_regex_price(monkeypatch):
     assert r.llm_called and r.llm_total_tokens == 100  # spend is recorded
 
 
+def test_cross_check_small_delta_counts_as_agreement(monkeypatch):
+    # A clip-coupon-sized difference (5%) is the same price for trend
+    # purposes: keep the regex sticker price, just with raised confidence.
+    _llm_on(monkeypatch)
+    _stub_llm(
+        monkeypatch,
+        ExtractionResult(price=14.24, method="llm", llm_called=True),
+    )
+    r = extract_from_html(LONE_ADDON_PRICE_PAGE)
+    assert r.method == "regex" and r.price == 14.99
+    assert r.confidence == 0.7
+
+
 def test_cross_check_disagreement_prefers_llm(monkeypatch):
     _llm_on(monkeypatch)
     _stub_llm(
