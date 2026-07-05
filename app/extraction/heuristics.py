@@ -240,44 +240,94 @@ def from_embedded_json(html: str) -> ExtractionResult | None:
     return None
 
 
-# Elements likely to hold the visible price.
-_PRICE_SELECTORS = (
-    '[itemprop="price"]',
-    "[data-price]",
-    '[class*="price" i]',
-    '[id*="price" i]',
-)
+# Elements explicitly annotated as the price — first match wins.
+_STRONG_PRICE_SELECTORS = ('[itemprop="price"]', "[data-price]")
+# Elements merely *named* like a price (class/id) — guessy, so candidates are
+# collected and the page votes: warranty add-ons and carousel items mention a
+# price once, the product's own price repeats (buybox, sticky bar, mobile).
+_WEAK_PRICE_SELECTORS = ('[class*="price" i]', '[id*="price" i]')
 _CURRENCY_SYMBOL = re.compile(r"[$£€¥₹]")
+# A number ATTACHED to a currency symbol. Element text often mixes prices with
+# other numerals ('Size:8.5" x 11" ... Our Price:$19.99') — bare-number parsing
+# grabs the wrong one, so only currency-adjacent amounts count.
+_MONEY_RE = re.compile(
+    r"[$£€¥₹]\s*\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:[.,]\d{1,2})?\s*[$£€¥₹]"
+)
+
+
+def _parse_money(text: str) -> tuple[float, str | None] | None:
+    """(amount, currency) of the first currency-adjacent number in `text`."""
+    match = _MONEY_RE.search(text)
+    if match is None:
+        return None
+    parsed = Price.fromstring(match.group(0))
+    amount = parsed.amount_float
+    if amount is None or not (_MIN_PRICE <= amount <= _MAX_PRICE):
+        return None
+    return amount, parsed.currency
 
 
 def from_price_elements(html: str) -> ExtractionResult | None:
-    """Last-resort: parse currency-looking text from price-flagged elements."""
+    """Last-resort: parse currency-adjacent text from price-flagged elements."""
     tree = HTMLParser(html)
-    seen = 0
-    for selector in _PRICE_SELECTORS:
-        for node in tree.css(selector):
-            seen += 1
-            if seen > 60:  # bound the scan
-                break
-            text = (
-                node.attributes.get("data-price")
-                or node.attributes.get("content")
-                or node.text(strip=True)
-            )
-            if not text or not _CURRENCY_SYMBOL.search(text):
+
+    def element_text(node) -> str:  # noqa: ANN001 - selectolax node
+        return (
+            node.attributes.get("data-price")
+            or node.attributes.get("content")
+            or node.text(strip=True)
+            or ""
+        )
+
+    for selector in _STRONG_PRICE_SELECTORS:
+        for node in tree.css(selector)[:20]:
+            text = element_text(node)
+            if not _CURRENCY_SYMBOL.search(text):
                 continue
-            parsed = Price.fromstring(text)
-            amount = parsed.amount_float
-            if amount is not None and _MIN_PRICE <= amount <= _MAX_PRICE:
+            money = _parse_money(text)
+            if money is not None:
+                amount, currency = money
                 return ExtractionResult(
                     price=amount,
-                    currency=parsed.currency,
+                    currency=currency,
                     method="regex",
                     hint=f"regex:{selector}",
                     confidence=0.4,
-                    raw=text,
+                    raw=text[:120],
                 )
-    return None
+
+    # Weak selectors: tally every candidate and take the most repeated amount
+    # (ties break toward the earliest seen).
+    votes: dict[float, int] = {}
+    first: dict[float, tuple[int, str | None, str, str]] = {}  # order/cur/sel/raw
+    seen = 0
+    for selector in _WEAK_PRICE_SELECTORS:
+        for node in tree.css(selector):
+            seen += 1
+            if seen > 80:  # bound the scan
+                break
+            text = element_text(node)
+            if not text or not _CURRENCY_SYMBOL.search(text):
+                continue
+            money = _parse_money(text)
+            if money is None:
+                continue
+            amount, currency = money
+            votes[amount] = votes.get(amount, 0) + 1
+            if amount not in first:
+                first[amount] = (seen, currency, selector, text)
+    if not votes:
+        return None
+    best = min(votes, key=lambda a: (-votes[a], first[a][0]))
+    _, currency, selector, text = first[best]
+    return ExtractionResult(
+        price=best,
+        currency=currency,
+        method="regex",
+        hint=f"regex:{selector}",
+        confidence=0.4,
+        raw=text[:120],
+    )
 
 
 # The heuristic cascade, strongest first.
