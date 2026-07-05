@@ -54,6 +54,10 @@ future checks are deterministic and free — the LLM never runs on the happy pat
 
 Cascade, stopping at the first confident hit:
 
+0. **Site-specific handlers** — for sites whose prices aren't in the HTML at
+   all (e.g. Agoda hotel pages: fully JS-rendered, price comes from the site's
+   own JSON API). The Agoda handler tracks the **lowest room price** for the
+   stay encoded in the URL.
 1. **JSON-LD** `Product`/`Offer` price (via `extruct`)
 2. **Microdata** schema.org Product/Offer
 3. **Meta / Open Graph** — `product:price:amount`, `og:price:amount`, `itemprop=price`
@@ -93,6 +97,7 @@ Sweep-based (vs. one job per item) survives restarts cleanly.
 | M4 | Dashboard UI (list, add-with-preview, history chart, remove) | ✅ |
 | M5 | LLM fallback hardening + cost caps + usage tracking | ✅ |
 | M6 | Dockerize + deploy to pi5-ai2 via noBGP + smoke test | ✅ |
+| M7 | Hotel pricing: Agoda site handler (lowest room via property API) + paid LLM default | ✅ |
 | Later | Playwright fallback · variant (size/color) verification · email alerts | ☐ |
 
 ## Risks / caveats

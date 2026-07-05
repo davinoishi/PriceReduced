@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 # Ordered from most to least trustworthy. Used as `extraction_method` and,
 # once known for an item, lets future checks skip straight to the winner.
-METHODS = ("json-ld", "microdata", "meta", "embedded-json", "regex", "llm")
+METHODS = ("agoda-api", "json-ld", "microdata", "meta", "embedded-json", "regex", "llm")
 
 
 @dataclass
