@@ -45,6 +45,26 @@ PRICE_ELEMENT_PAGE = """
 </body></html>
 """
 
+# Real-world failure (epson.ca): the price-classed block mixes dimensions with
+# the price. Parsing must take the currency-adjacent $19.99, not the 8.5 inch.
+MIXED_NUMBERS_PRICE_PAGE = """
+<html><body>
+<div class="product-price-block">Size:8.5" x 11"Count:500 SheetsOur Price:$19.99</div>
+</body></html>
+"""
+
+# Real-world failure (amazon.ca): the FIRST price-classed element is a $14.99
+# warranty add-on; the product's own price repeats across the page and must
+# win the vote.
+ADDON_BEFORE_PRICE_PAGE = """
+<html><body>
+<span class="attach-warranty-price">$14.99</span>
+<span class="apex-core-price">$159.00</span>
+<span class="a-price">$159.00</span>
+<div class="price-update-row">$159.00 Includes selected options.</div>
+</body></html>
+"""
+
 NO_PRICE_PAGE = "<html><body><p>Just an article, no price here.</p></body></html>"
 
 IDENTITY_PAGE = """
@@ -107,6 +127,20 @@ def test_price_element_fallback():
     r = extract_from_html(PRICE_ELEMENT_PAGE, use_llm=False)
     assert r.found
     assert r.price == 1299.00
+    assert r.method == "regex"
+
+
+def test_price_element_ignores_non_currency_numbers():
+    r = extract_from_html(MIXED_NUMBERS_PRICE_PAGE, use_llm=False)
+    assert r.found
+    assert r.price == 19.99  # not the 8.5-inch paper dimension
+    assert r.method == "regex"
+
+
+def test_price_element_repeated_price_outvotes_addon():
+    r = extract_from_html(ADDON_BEFORE_PRICE_PAGE, use_llm=False)
+    assert r.found
+    assert r.price == 159.00  # not the $14.99 warranty seen first
     assert r.method == "regex"
 
 
