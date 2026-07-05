@@ -15,6 +15,10 @@
         <input id="target_price" name="target_price" type="number" step="0.01" min="0" placeholder="optional" style="width:100%;">
       </div>
       <div style="width:150px;">
+        <label for="need_by">Need by</label>
+        <input id="need_by" name="need_by" type="date" style="width:100%;">
+      </div>
+      <div style="width:150px;">
         <label for="interval_minutes">Check every</label>
         <select id="interval_minutes" name="interval_minutes" style="width:100%;">
           <option value="360">6 hours</option>
@@ -61,6 +65,8 @@
                 <a href="/items/{{ it.id }}" style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
                 <span class="muted" style="flex-shrink:0;">{{ row.domain }}</span>
                 {% if m %}<span class="badge {{ m[1] }}" style="flex-shrink:0;">{{ m[0] }}</span>{% endif %}
+                {% set nb = need_by_display(it.need_by) %}
+                {% if nb %}<span class="badge {{ nb[1] }}" style="flex-shrink:0;">{{ nb[0] }}</span>{% endif %}
                 <span class="badge {{ cls }}" style="flex-shrink:0;">{{ label }}</span>
                 <span style="font-weight:600; flex-shrink:0; {% if g.cheapest and it.id == g.cheapest.id %}color:var(--ok);{% endif %}">{{ format_price(it.last_price, it.currency) }}</span>
               </div>
@@ -86,6 +92,8 @@
           <div style="display:flex; gap:8px; align-items:center;">
             <a href="/items/{{ it.id }}" style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ it.title or it.url }}</a>
             <span class="badge {{ cls }}">{{ label }}</span>
+            {% set nb = need_by_display(it.need_by) %}
+            {% if nb %}<span class="badge {{ nb[1] }}">{{ nb[0] }}</span>{% endif %}
           </div>
           <div class="muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.domain }}</div>
           <div class="muted" style="font-size:12px;">

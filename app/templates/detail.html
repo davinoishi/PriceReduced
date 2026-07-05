@@ -29,6 +29,8 @@
             {% if item.last_price is not none and item.last_price <= item.target_price %}<span class="target-hit">✓ hit</span>{% endif %}
           </span>
         {% endif %}
+        {% set nb = need_by_display(item.need_by) %}
+        {% if nb %}<span class="badge {{ nb[1] }}">{{ nb[0] }}</span>{% endif %}
       </div>
       <div class="muted" style="font-size:12px; margin-top:8px;">
         Method: {{ item.extraction_method or "—" }} ·
@@ -72,6 +74,11 @@
         <input id="target_price" name="target_price" type="number" step="0.01" min="0"
                value="{{ '%.2f'|format(item.target_price) if item.target_price is not none else '' }}"
                placeholder="none" style="width:100%;">
+      </div>
+      <div style="width:160px;">
+        <label for="need_by">Need by</label>
+        <input id="need_by" name="need_by" type="date"
+               value="{{ item.need_by.isoformat() if item.need_by else '' }}" style="width:100%;">
       </div>
       <div style="width:160px;">
         <label for="interval_minutes">Check every</label>

@@ -41,6 +41,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "sku": "VARCHAR",
         "brand": "VARCHAR",
         "match_status": "VARCHAR",
+        "need_by": "DATE",
     },
     "pricepoint": {
         "price_basis": "VARCHAR",

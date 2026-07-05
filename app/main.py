@@ -9,6 +9,7 @@ import base64
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -36,6 +37,7 @@ templates.env.globals.update(
     status_display=web_helpers.status_display,
     basis_display=web_helpers.basis_display,
     match_display=web_helpers.match_display,
+    need_by_display=web_helpers.need_by_display,
 )
 
 
@@ -45,6 +47,16 @@ def _parse_float(value: str | None) -> float | None:
         return None
     try:
         return float(value)
+    except ValueError:
+        return None
+
+
+def _parse_date(value: str | None) -> date | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
     except ValueError:
         return None
 
@@ -98,6 +110,7 @@ async def basic_auth(request: Request, call_next):
 class AddItemRequest(BaseModel):
     url: str
     target_price: float | None = None
+    need_by: date | None = None
     interval_minutes: int | None = None
     check_now: bool = True
     group_id: int | None = None
@@ -144,6 +157,9 @@ def _item_row(session: Session, item) -> dict:
         "domain": urlparse(item.url).netloc,
         "spark": web_helpers.sparkline_svg(prices),
         "target_hit": target_hit,
+        # Same drop signal as the sparkline color: latest comparable price is
+        # below where the tracked series started.
+        "price_dropped": len(prices) >= 2 and prices[-1] < prices[0],
     }
 
 
@@ -154,6 +170,7 @@ def dashboard(request: Request, error: str | None = None, session: Session = Dep
         for item in services.list_items(session)
         if item.group_id is None
     ]
+    rows.sort(key=web_helpers.row_sort_key)
     group_rows = []
     for group in services.list_groups(session):
         summary = services.group_summary(session, group)
@@ -161,6 +178,14 @@ def dashboard(request: Request, error: str | None = None, session: Session = Dep
             _item_row(session, member) for member in summary["members"]
         ]
         group_rows.append(summary)
+    # Group cards rank by their most actionable member (sort is stable, so
+    # equally-ranked groups keep their newest-first order).
+    group_rows.sort(
+        key=lambda g: min(
+            (web_helpers.row_sort_key(r) for r in g["member_rows"]),
+            default=web_helpers.row_sort_key_default(),
+        )
+    )
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -177,6 +202,7 @@ def dashboard(request: Request, error: str | None = None, session: Session = Dep
 def web_add_item(
     url: str = Form(...),
     target_price: str = Form(""),
+    need_by: str = Form(""),
     interval_minutes: str = Form(""),
     session: Session = Depends(get_session),
 ):
@@ -185,6 +211,7 @@ def web_add_item(
             session,
             url,
             target_price=_parse_float(target_price),
+            need_by=_parse_date(need_by),
             interval_minutes=int(interval_minutes) if interval_minutes.strip() else None,
         )
     except (services.DuplicateItemError, ValueError) as exc:
@@ -241,6 +268,7 @@ def web_check_item(item_id: int, session: Session = Depends(get_session)):
 def web_update_item(
     item_id: int,
     target_price: str = Form(""),
+    need_by: str = Form(""),
     interval_minutes: str = Form("1440"),
     active: str = Form("true"),
     session: Session = Depends(get_session),
@@ -249,6 +277,7 @@ def web_update_item(
         session,
         item_id,
         target_price=_parse_float(target_price),
+        need_by=_parse_date(need_by),
         interval_minutes=int(interval_minutes) if interval_minutes.strip() else 1440,
         active=active == "true",
     )
@@ -377,6 +406,7 @@ def api_add_item(payload: AddItemRequest, session: Session = Depends(get_session
             session,
             payload.url,
             target_price=payload.target_price,
+            need_by=payload.need_by,
             interval_minutes=payload.interval_minutes,
             check_now=payload.check_now,
             group_id=payload.group_id,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -74,6 +76,19 @@ def test_identity_fields_fill_once(session, monkeypatch):
     services.check_item(session, item)
     assert item.gtin == "4548736132579"
     assert item.brand == "Sony"
+
+
+def test_need_by_set_on_add_and_update(session, monkeypatch):
+    _stub(monkeypatch, ExtractionResult(price=5.0, method="meta", http_status=200))
+    deadline = date(2026, 8, 1)
+    item, _ = services.add_item(session, "https://shop.test/gift", need_by=deadline)
+    assert item.need_by == deadline
+
+    updated = services.update_item(
+        session, item.id, target_price=None, need_by=None,
+        interval_minutes=1440, active=True,
+    )
+    assert updated.need_by is None
 
 
 def test_duplicate_url_rejected(session, monkeypatch):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlmodel import Field, SQLModel
 
@@ -51,6 +51,8 @@ class Item(SQLModel, table=True):
     image_url: str | None = None
     currency: str | None = None
     target_price: float | None = None
+    # Deadline to have the item in hand; set on few items, drives dashboard sort.
+    need_by: date | None = None
     interval_minutes: int = 1440
     active: bool = True
 
