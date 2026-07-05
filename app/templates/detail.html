@@ -42,7 +42,7 @@
         {% if item.mpn %} · MPN {{ item.mpn }}{% endif %}
       </div>
     </div>
-    <div style="display:flex; flex-direction:column; gap:8px;">
+    <div class="detail-actions" style="display:flex; flex-direction:column; gap:8px;">
       <form class="inline" method="post" action="/items/{{ item.id }}/check">
         <button class="btn primary" type="submit" style="width:100%;">Check now</button>
       </form>
@@ -68,7 +68,7 @@
   </div>
 
   <div class="card">
-    <form method="post" action="/items/{{ item.id }}/settings" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end;">
+    <form method="post" action="/items/{{ item.id }}/settings" class="stack-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end;">
       <div style="width:150px;">
         <label for="target_price">Target price</label>
         <input id="target_price" name="target_price" type="number" step="0.01" min="0"
@@ -98,7 +98,7 @@
       <button class="btn" type="submit">Save settings</button>
     </form>
 
-    <form method="post" action="/items/{{ item.id }}/group" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; margin-top:16px; border-top:1px solid var(--line); padding-top:16px;">
+    <form method="post" action="/items/{{ item.id }}/group" class="stack-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; margin-top:16px; border-top:1px solid var(--line); padding-top:16px;">
       <div>
         <label for="group_id">Group (compare across stores)</label>
         <select id="group_id" name="group_id" style="width:260px;">

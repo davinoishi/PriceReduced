@@ -51,6 +51,7 @@
     .badge {
       display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px;
       border-radius: 999px; text-transform: uppercase; letter-spacing: .03em;
+      white-space: nowrap; flex-shrink: 0;
     }
     .badge.ok { background: rgba(34,197,94,.15); color: var(--ok); }
     .badge.warn { background: rgba(245,158,11,.15); color: var(--warn); }
@@ -66,6 +67,40 @@
     .price { font-size: 22px; font-weight: 700; }
     .target-hit { color: var(--ok); font-weight: 600; font-size: 12px; }
     form.inline { display: inline; }
+
+    /* ---- Mobile / narrow screens (Samsung Fold cover ~280px, folded ~344px) ---- */
+    @media (max-width: 480px) {
+      .wrap { padding: 16px 12px 48px; }
+      header.top { gap: 8px; }
+
+      /* 16px controls stop iOS Safari from auto-zooming on focus */
+      input, select { font-size: 16px; }
+
+      /* Comfortable tap targets (~44px) */
+      .btn { min-height: 44px; padding: 11px 16px; }
+
+      /* Multi-field forms: one clean column, full-width fields + button */
+      .stack-form > div { flex: 1 1 100% !important; width: 100% !important; }
+      .stack-form input, .stack-form select { width: 100% !important; }
+      .stack-form > .btn { width: 100%; }
+      form.inline .btn { width: 100%; }
+
+      /* Group member rows: stack title over the badge/price line instead of
+         forcing everything onto one truncated row */
+      .group-row { flex-wrap: wrap; }
+      .group-row .group-row-title {
+        flex: 1 1 100%; white-space: normal; overflow: visible;
+      }
+
+      /* Item cards: keep thumbnail beside the body, let the title/badges wrap,
+         and drop the price onto its own full-width line below.
+         !important overrides the elements' inline flex/white-space. */
+      .item-card { flex-wrap: wrap; gap: 12px; }
+      .item-body { flex: 1 1 0 !important; min-width: 0; }
+      .item-title-row { flex-wrap: wrap; }
+      .item-title { white-space: normal !important; overflow: visible !important; }
+      .item-price { flex: 1 1 100%; text-align: left; }
+    }
   </style>
   {% block head %}{% endblock %}
 </head>
