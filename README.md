@@ -14,8 +14,13 @@ See [PLAN.md](PLAN.md) for the full design and milestones.
 ## Features
 
 - **Automatic price extraction** from arbitrary product URLs — a tiered cascade
-  (JSON-LD → microdata → Open Graph/meta → embedded JSON → price-flagged
-  elements), with a cheap **LLM fallback** only when heuristics miss.
+  (site-specific handlers → JSON-LD → microdata → Open Graph/meta → embedded
+  JSON → price-flagged elements), with a cheap **LLM fallback** only when
+  heuristics miss.
+- **Hotel pricing (Agoda)** — property pages are fully JS-rendered (no price in
+  the HTML), so a site handler calls Agoda's own pricing API for the stay dates
+  in the URL and tracks the **lowest room price** across all room types.
+  Currency follows the server-side session and is recorded with each point.
 - **Scheduled checks** (per-item interval, default daily) via an in-process
   background sweep — no external scheduler.
 - **Price history** retained until you remove the item, with a chart per item

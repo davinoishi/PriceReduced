@@ -17,7 +17,7 @@ class FetchResult:
     error: str | None = None
 
 
-def _headers() -> dict[str, str]:
+def browser_headers() -> dict[str, str]:
     # A fuller, browser-like header set gets past casual bot filters. It won't
     # beat aggressive protection (Akamai/PerimeterX product pages) — those are
     # marked "blocked" and left for a phase-2 headless-browser fallback.
@@ -40,7 +40,7 @@ def fetch(url: str) -> FetchResult:
     """GET a URL, following redirects. Never raises for HTTP/network errors."""
     try:
         with httpx.Client(
-            headers=_headers(),
+            headers=browser_headers(),
             follow_redirects=True,
             timeout=settings.request_timeout_seconds,
         ) as client:

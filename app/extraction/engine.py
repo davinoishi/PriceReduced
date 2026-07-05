@@ -8,6 +8,7 @@ from app.config import settings
 from app.extraction.fetcher import fetch
 from app.extraction.heuristics import HEURISTICS
 from app.extraction.llm import from_llm
+from app.extraction.sites import find_site_handler
 from app.extraction.types import ExtractionResult
 
 
@@ -74,6 +75,17 @@ def extract_from_html(html: str, *, use_llm: bool = True) -> ExtractionResult:
 
 def extract_price(url: str, *, use_llm: bool = True) -> ExtractionResult:
     """Fetch `url` and extract its price. Never raises."""
+    # Site-specific handlers first: some sites (e.g. Agoda hotel pages) ship
+    # no prices in their HTML at all, but expose a pricing API we can call.
+    handler = find_site_handler(url)
+    if handler is not None:
+        try:
+            site_result = handler(url)
+        except Exception:  # noqa: BLE001 - fall back to the generic path
+            site_result = None
+        if site_result is not None:
+            return site_result
+
     fetched = fetch(url)
     if fetched.error:
         return ExtractionResult(

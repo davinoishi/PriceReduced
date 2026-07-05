@@ -24,7 +24,9 @@ class Settings(BaseSettings):
 
     # OpenRouter / LLM fallback
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemma-2-9b-it:free"
+    # A cheap PAID model by default: free-tier models have inconsistent
+    # availability and weak parsing. At fallback-only volume this costs pennies.
+    openrouter_model: str = "google/gemini-2.5-flash-lite"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     llm_extraction_enabled: bool = True
     llm_max_input_chars: int = 8000

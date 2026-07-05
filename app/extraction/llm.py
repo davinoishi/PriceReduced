@@ -21,8 +21,10 @@ _SYSTEM_PROMPT = (
     "You extract the current selling price from an e-commerce product page. "
     'Respond with ONLY compact JSON: {"price": <number|null>, '
     '"currency": <string|null>}. "price" is the amount the customer pays now '
-    "(prefer a sale/current price over list price). Use a plain number, no "
-    "symbols or thousands separators. If you cannot find a clear price, use null."
+    "(prefer a sale/current price over list price). If the page offers several "
+    "purchase options for the same product or stay (e.g. hotel room types), "
+    "return the LOWEST current price a customer could pay. Use a plain number, "
+    "no symbols or thousands separators. If you cannot find a clear price, use null."
 )
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
