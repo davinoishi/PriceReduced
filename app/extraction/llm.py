@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from bisect import bisect_left, bisect_right
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -21,10 +22,12 @@ _SYSTEM_PROMPT = (
     "You extract the current selling price from an e-commerce product page. "
     'Respond with ONLY compact JSON: {"price": <number|null>, '
     '"currency": <string|null>}. "price" is the amount the customer pays now '
-    "(prefer a sale/current price over list price). If the page offers several "
-    "purchase options for the same product or stay (e.g. hotel room types), "
-    "return the LOWEST current price a customer could pay. Use a plain number, "
-    "no symbols or thousands separators. If you cannot find a clear price, use null."
+    "for the MAIN product on the page (prefer a sale/current price over list "
+    "price). Ignore warranties, protection plans, add-ons, accessories, and "
+    "related/sponsored products. If the page offers several purchase options "
+    "for the same product or stay (e.g. hotel room types), return the LOWEST "
+    "current price a customer could pay. Use a plain number, no symbols or "
+    "thousands separators. If you cannot find a clear price, use null."
 )
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -33,7 +36,10 @@ _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 def reduce_page_text(html: str, max_chars: int) -> str:
     """Strip scripts/styles and collapse to visible text, capped in length.
 
-    Bias toward the region around currency symbols, where the price usually is.
+    Bias toward the DENSEST cluster of currency symbols: the buy box mentions
+    the price several times (price, per-unit, totals), while the page's first
+    symbol is often a stray (currency selector, promo banner, add-on) that
+    would anchor the window on the wrong region.
     """
     tree = HTMLParser(html)
     for tag in tree.css("script, style, noscript, svg"):
@@ -44,11 +50,18 @@ def reduce_page_text(html: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
 
-    match = re.search(r"[$£€¥₹]", text)
-    if match:
-        start = max(0, match.start() - max_chars // 2)
-        return text[start : start + max_chars]
-    return text[:max_chars]
+    positions = [m.start() for m in re.finditer(r"[$£€¥₹]", text)]
+    if not positions:
+        return text[:max_chars]
+    lead = max_chars // 5  # keep some context before the first symbol
+    best_start, best_count = max(0, positions[0] - lead), 1
+    for pos in positions:
+        start = max(0, pos - lead)
+        end = start + max_chars
+        count = bisect_right(positions, end) - bisect_left(positions, start)
+        if count > best_count:
+            best_start, best_count = start, count
+    return text[best_start : best_start + max_chars]
 
 
 def _parse_response(content: str) -> tuple[float | None, str | None]:

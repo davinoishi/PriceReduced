@@ -107,7 +107,14 @@ def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePo
     # Gate the (paid) LLM fallback on availability and the monthly cap so a
     # miss never silently spends past the budget — it just fails to a status.
     allow_llm = use_llm and settings.llm_available and not llm_cap_reached(session)
-    result = extract_price(item.url, use_llm=allow_llm)
+    # When the current price came from the regex tier, pass it as reference so
+    # the engine only spends an LLM cross-check on a new or changed price.
+    regex_reference = (
+        item.last_price if item.extraction_method == "regex" else None
+    )
+    result = extract_price(
+        item.url, use_llm=allow_llm, regex_reference=regex_reference
+    )
     if result.llm_called:
         record_llm_call(session, result, item_id=item.id)
     status = _status_for(result)
