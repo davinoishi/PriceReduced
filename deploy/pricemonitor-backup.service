@@ -1,0 +1,9 @@
+[Unit]
+Description=PriceMonitor SQLite backup to USB drive
+# Backup works even if docker is down (reads the volume path directly),
+# but ordering after docker avoids racing the daemon at boot catch-up time.
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pricemonitor-backup.sh

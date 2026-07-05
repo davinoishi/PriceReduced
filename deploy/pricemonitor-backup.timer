@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly PriceMonitor backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+# Run a missed backup shortly after boot (e.g. Pi was off overnight).
+Persistent=true
+
+[Install]
+WantedBy=timers.target
