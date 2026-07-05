@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from app.models import (
     MATCH_MISMATCH,
@@ -90,6 +90,53 @@ def match_display(status: str | None) -> tuple[str, str] | None:
     if status is None:
         return None
     return _MATCH_DISPLAY.get(status, (status, "pending"))
+
+
+def need_by_display(d: date | None) -> tuple[str, str] | None:
+    """(label, css-class) for an item's need-by date; None when unset."""
+    if d is None:
+        return None
+    today = utcnow().date()
+    fmt = "%b %-d" if d.year == today.year else "%b %-d, %Y"
+    if d < today:
+        return (f"needed {d.strftime(fmt)}", "error")
+    if (d - today).days <= 7:
+        return (f"need by {d.strftime(fmt)}", "warn")
+    return (f"need by {d.strftime(fmt)}", "pending")
+
+
+# Dashboard ordering buckets, top to bottom.
+_SORT_TARGET_HIT = 0
+_SORT_PRICE_DROP = 1
+_SORT_NEED_BY = 2
+_SORT_NORMAL = 3
+_SORT_UNREACHABLE = 4  # no price found / site blocks bots
+
+
+def row_sort_key(row: dict) -> tuple:
+    """Sort key for a dashboard item row (a `_item_row` dict).
+
+    Actionable rows float up: target hits first, then price drops, then items
+    with a need-by deadline (soonest first). Items whose last check found no
+    price or was blocked sink to the bottom — there's nothing to act on.
+    """
+    item = row["item"]
+    if item.last_status in (STATUS_NO_PRICE, STATUS_BLOCKED):
+        bucket = _SORT_UNREACHABLE
+    elif row["target_hit"]:
+        bucket = _SORT_TARGET_HIT
+    elif row["price_dropped"]:
+        bucket = _SORT_PRICE_DROP
+    elif item.need_by is not None:
+        bucket = _SORT_NEED_BY
+    else:
+        bucket = _SORT_NORMAL
+    return (bucket, item.need_by or date.max)
+
+
+def row_sort_key_default() -> tuple:
+    """Key for a row-less entity (e.g. an empty group): plain middle of the list."""
+    return (_SORT_NORMAL, date.max)
 
 
 def sparkline_svg(prices: list[float | None], width: int = 140, height: int = 32) -> str:

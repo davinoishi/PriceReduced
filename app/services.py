@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 from difflib import SequenceMatcher
 
 from sqlalchemy import func
@@ -182,6 +182,7 @@ def add_item(
     url: str,
     *,
     target_price: float | None = None,
+    need_by: date | None = None,
     interval_minutes: int | None = None,
     check_now: bool = True,
     group_id: int | None = None,
@@ -197,6 +198,7 @@ def add_item(
     item = Item(
         url=url,
         target_price=target_price,
+        need_by=need_by,
         interval_minutes=interval_minutes or settings.default_check_interval_minutes,
         next_check_at=utcnow(),
         group_id=group_id,
@@ -236,6 +238,7 @@ def update_item(
     item_id: int,
     *,
     target_price: float | None,
+    need_by: date | None,
     interval_minutes: int,
     active: bool,
 ) -> Item | None:
@@ -244,6 +247,7 @@ def update_item(
     if item is None:
         return None
     item.target_price = target_price
+    item.need_by = need_by
     item.interval_minutes = max(1, interval_minutes)
     item.active = active
     base = item.last_checked_at or utcnow()
