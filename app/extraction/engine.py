@@ -39,7 +39,11 @@ def _copy_llm_telemetry(dst: ExtractionResult, src: ExtractionResult) -> None:
 
 
 def _prices_agree(a: float, b: float) -> bool:
-    return abs(a - b) / max(a, b) <= 0.03
+    # Generous on purpose: the cross-check exists to catch GROSS errors (the
+    # wrong element entirely — 14.99 vs 159.00), not to adjudicate small
+    # deltas like clip-coupons or tax display (LLM reading 151.05 for a
+    # 159.00-with-5%-coupon page is "the same price" for trend purposes).
+    return abs(a - b) / max(a, b) <= 0.10
 
 
 def _cross_check_regex(result: ExtractionResult, html: str) -> ExtractionResult:
