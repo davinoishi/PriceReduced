@@ -41,14 +41,24 @@ sites still ship the price in the initial HTML).
 
 ## Data model
 
-- **item** — `id, url, title, image_url, currency, target_price?,
-  interval_minutes (default 1440), extraction_method, extraction_hint, active,
-  created_at, last_checked_at, next_check_at, last_status`
+- **item** — `id, url, title, image_url, currency, target_price?, need_by?,
+  interval_minutes (default 1440), active, extraction_method, extraction_hint,
+  created_at, last_price, last_status, last_checked_at, next_check_at` plus
+  cross-channel fields `group_id?, gtin?, mpn?, sku?, brand?, match_status?`.
+- **item_group** — `id, name, gtin?, brand?, mpn?, created_at`. One thing to buy,
+  tracked across its member items; canonical identity is backfilled from the
+  first member that carries it.
 - **price_point** — `id, item_id, price, currency, checked_at, method_used,
-  http_status, ok, raw_value`
+  http_status, ok, status, raw_value, price_basis?, variant?`. `price_basis`
+  records what a price *means* (e.g. per-night-inclusive) so charts never mix
+  incomparable bases; `variant` records the offer behind it (e.g. room type).
+- **llm_call** — `id, created_at, month, model, prompt/completion/total tokens,
+  ok, item_id?`. One OpenRouter fallback call, for usage tracking + the cap.
 
 `extraction_method` + `extraction_hint` remember *how* a price was found so
 future checks are deterministic and free — the LLM never runs on the happy path.
+`need_by` (set on a few items) and the latest-check snapshot drive the
+actionability-sorted dashboard.
 
 ## Extraction engine (the core)
 
@@ -98,7 +108,9 @@ Sweep-based (vs. one job per item) survives restarts cleanly.
 | M5 | LLM fallback hardening + cost caps + usage tracking | ✅ |
 | M6 | Dockerize + deploy to pi5-ai2 via noBGP + smoke test | ✅ |
 | M7 | Hotel pricing: Agoda site handler (lowest room via property API) + paid LLM default | ✅ |
-| Later | Playwright fallback · variant (size/color) verification · email alerts | ☐ |
+| M8 | Item groups (cheapest-channel): group members across stores, auto product-identity capture (GTIN/MPN/brand) + honesty badges, one-time LLM cross-check on the guessy tier | ✅ |
+| M9 | Actionable-first dashboard: sort by target hits → price drops → need-by deadline → normal → unreachable; per-item need-by dates; responsive layout down to narrow phones | ✅ |
+| Later | Playwright fallback · variant (size/color) verification · email/push alerts on drops & target hits | ☐ |
 
 ## Risks / caveats
 
