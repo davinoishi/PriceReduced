@@ -42,6 +42,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "brand": "VARCHAR",
         "match_status": "VARCHAR",
         "need_by": "DATE",
+        "checking_since": "DATETIME",
     },
     "pricepoint": {
         "price_basis": "VARCHAR",

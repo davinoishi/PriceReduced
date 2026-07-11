@@ -21,6 +21,8 @@ class Settings(BaseSettings):
         "Chrome/126.0.0.0 Safari/537.36"
     )
     request_timeout_seconds: float = 20.0
+    max_response_bytes: int = 5_000_000
+    max_redirects: int = 5
 
     # OpenRouter / LLM fallback
     openrouter_api_key: str = ""

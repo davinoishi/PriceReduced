@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urljoin
 
 import httpx
 
 from app.config import settings
+from app.url_safety import UnsafeUrlError, normalize_public_url
 
 
 @dataclass
@@ -37,20 +39,51 @@ def browser_headers() -> dict[str, str]:
 
 
 def fetch(url: str) -> FetchResult:
-    """GET a URL, following redirects. Never raises for HTTP/network errors."""
+    """GET a public URL with bounded, validated redirects and response size."""
     try:
         with httpx.Client(
             headers=browser_headers(),
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=settings.request_timeout_seconds,
         ) as client:
-            resp = client.get(url)
-        return FetchResult(
-            status_code=resp.status_code,
-            html=resp.text,
-            final_url=str(resp.url),
-        )
-    except httpx.HTTPError as exc:
+            current = url
+            for redirect_count in range(settings.max_redirects + 1):
+                current = normalize_public_url(current, resolve=True)
+                with client.stream("GET", current) as resp:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
+                            break
+                        if redirect_count >= settings.max_redirects:
+                            raise httpx.TooManyRedirects("too many redirects")
+                        current = urljoin(current, location)
+                        continue
+                    content_type = resp.headers.get("content-type", "").lower()
+                    if content_type and not any(
+                        kind in content_type
+                        for kind in ("text/html", "application/xhtml+xml", "text/plain")
+                    ):
+                        return FetchResult(
+                            status_code=resp.status_code,
+                            html="",
+                            final_url=current,
+                            error=f"unsupported content type: {content_type[:80]}",
+                        )
+                    body = bytearray()
+                    for chunk in resp.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > settings.max_response_bytes:
+                            return FetchResult(
+                                status_code=resp.status_code,
+                                html="",
+                                final_url=current,
+                                error="response exceeded configured size limit",
+                            )
+                    encoding = resp.encoding or "utf-8"
+                    html = bytes(body).decode(encoding, errors="replace")
+                    return FetchResult(resp.status_code, html, current)
+            return FetchResult(0, "", current, "redirect response had no location")
+    except (httpx.HTTPError, UnsafeUrlError) as exc:
         return FetchResult(
             status_code=0, html="", final_url=url, error=f"{type(exc).__name__}: {exc}"
         )
