@@ -177,6 +177,21 @@ def test_mixed_currencies_disable_cheapest(session, monkeypatch):
     assert summary["mixed_currencies"] is True
 
 
+def test_failed_member_stale_price_is_not_current_cheapest(session, monkeypatch):
+    group = services.create_group(session, "widget")
+    _stub(monkeypatch, ExtractionResult(price=10.0, currency="USD", method="meta", http_status=200))
+    stale, _ = services.add_item(session, "https://cheap.test/w", group_id=group.id)
+    _stub(monkeypatch, ExtractionResult(price=20.0, currency="USD", method="meta", http_status=200))
+    current, _ = services.add_item(session, "https://current.test/w", group_id=group.id)
+
+    _stub(monkeypatch, ExtractionResult(method="none", http_status=503, error="unavailable"))
+    services.check_item(session, stale)
+
+    summary = services.group_summary(session, group)
+    assert stale.last_price == 10.0  # retained as historical context
+    assert summary["cheapest"].id == current.id
+
+
 def test_assign_and_unassign_existing_item(session, monkeypatch):
     _stub(monkeypatch, ExtractionResult(price=5.0, method="meta", http_status=200))
     item, _ = services.add_item(session, "https://shop.test/a")

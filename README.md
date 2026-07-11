@@ -39,6 +39,8 @@ See [PLAN.md](PLAN.md) for the full design and milestones.
   "cheapest").
 - **Scheduled checks** (per-item interval, default daily) via an in-process
   background sweep — no external scheduler.
+- **Duplicate-check protection** — a short database lease prevents a manual
+  check and the scheduler from fetching the same item simultaneously.
 - **Price history** retained until you remove the item, with a chart per item
   and a trend sparkline in the list.
 - **Actionable-first dashboard** — the list (and group cards) sort by what needs
@@ -112,6 +114,7 @@ All via environment / `.env` (see [.env.example](.env.example)):
 |-----|---------|
 | `DATABASE_URL` | SQLite path (default `sqlite:///./data/prices.db`) |
 | `USER_AGENT`, `REQUEST_TIMEOUT_SECONDS` | HTTP fetching |
+| `MAX_RESPONSE_BYTES`, `MAX_REDIRECTS` | Outbound fetch safety limits |
 | `OPENROUTER_API_KEY` | Enables the LLM fallback (blank = heuristics only) |
 | `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL` | Fallback model (default `google/gemini-2.5-flash-lite`, a cheap paid model — free tiers parse poorly and are flaky) and API base URL |
 | `LLM_EXTRACTION_ENABLED`, `LLM_MAX_INPUT_CHARS`, `LLM_MONTHLY_CALL_CAP` | LLM gating + cost control |
@@ -120,6 +123,10 @@ All via environment / `.env` (see [.env.example](.env.example)):
 
 > **Never commit `.env`.** It's gitignored. Keep the OpenRouter key and the
 > basic-auth password out of the repo.
+
+Tracked URLs and every redirect are restricted to the public HTTP(S) internet;
+loopback, private, link-local, credential-bearing, and non-web URLs are rejected.
+Responses are size-bounded before extraction.
 
 ## Deployment (Docker)
 

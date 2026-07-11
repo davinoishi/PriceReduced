@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app import services
 from app.extraction import ExtractionResult
-from app.models import STATUS_BLOCKED, STATUS_OK, Item, PricePoint, utcnow
+from app.models import STATUS_BLOCKED, STATUS_OK, utcnow
 
 
 @pytest.fixture
@@ -165,3 +165,50 @@ def test_due_sweep_checks_only_due_items(session, monkeypatch):
     session.add(item)
     session.commit()
     assert services.run_due_checks(session) == 1
+
+
+def test_successful_check_updates_changed_currency(session, monkeypatch):
+    _stub(monkeypatch, ExtractionResult(price=10.0, currency="USD", method="meta", http_status=200))
+    item, _ = services.add_item(session, "https://shop.test/currency")
+    _stub(monkeypatch, ExtractionResult(price=14.0, currency="CAD", method="meta", http_status=200))
+
+    services.check_item(session, item)
+
+    assert item.last_price == 14.0
+    assert item.currency == "CAD"
+
+
+@pytest.mark.parametrize("value", [-1.0, float("inf"), float("nan")])
+def test_invalid_target_price_rejected(session, value):
+    with pytest.raises(ValueError, match="target_price"):
+        services.add_item(session, "https://shop.test/invalid-price", target_price=value, check_now=False)
+
+
+@pytest.mark.parametrize("interval", [-1, 0, 4, services.MAX_INTERVAL_MINUTES + 1])
+def test_invalid_interval_rejected(session, interval):
+    with pytest.raises(ValueError, match="interval_minutes"):
+        services.add_item(session, "https://shop.test/invalid-interval", interval_minutes=interval, check_now=False)
+
+
+def test_active_check_lease_prevents_duplicate_fetch(session, monkeypatch):
+    _stub(monkeypatch, ExtractionResult(price=5.0, method="meta", http_status=200))
+    item, _ = services.add_item(session, "https://shop.test/leased")
+    item.checking_since = utcnow()
+    session.add(item)
+    session.commit()
+
+    with pytest.raises(services.CheckInProgressError):
+        services.check_item(session, item)
+
+
+def test_expired_check_lease_can_be_reclaimed(session, monkeypatch):
+    _stub(monkeypatch, ExtractionResult(price=5.0, method="meta", http_status=200))
+    item, _ = services.add_item(session, "https://shop.test/expired-lease")
+    item.checking_since = utcnow() - timedelta(minutes=services.CHECK_LEASE_MINUTES + 1)
+    session.add(item)
+    session.commit()
+
+    point = services.check_item(session, item)
+
+    assert point.ok is True
+    assert item.checking_since is None

@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session
 
 from app.config import settings
@@ -46,9 +46,10 @@ def _parse_float(value: str | None) -> float | None:
     if not value:
         return None
     try:
-        return float(value)
-    except ValueError:
-        return None
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError("price must be a number") from exc
+    return services._validate_optional_price(parsed, "price")
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -57,8 +58,8 @@ def _parse_date(value: str | None) -> date | None:
         return None
     try:
         return date.fromisoformat(value)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise ValueError("date must use YYYY-MM-DD format") from exc
 
 
 @asynccontextmanager
@@ -108,16 +109,27 @@ async def basic_auth(request: Request, call_next):
 
 
 class AddItemRequest(BaseModel):
-    url: str
-    target_price: float | None = None
+    url: str = Field(min_length=1, max_length=services.MAX_URL_LENGTH)
+    target_price: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     need_by: date | None = None
-    interval_minutes: int | None = None
+    interval_minutes: int | None = Field(
+        default=None,
+        ge=services.MIN_INTERVAL_MINUTES,
+        le=services.MAX_INTERVAL_MINUTES,
+    )
     check_now: bool = True
     group_id: int | None = None
 
 
 class CreateGroupRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=services.MAX_GROUP_NAME_LENGTH)
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("group name is empty")
+        return value
 
 
 class AssignGroupRequest(BaseModel):
@@ -148,7 +160,8 @@ def _item_row(session: Session, item) -> dict:
         ]
     prices = [p.price for p in history][-40:]
     target_hit = (
-        item.target_price is not None
+        item.last_status == services.STATUS_OK
+        and item.target_price is not None
         and item.last_price is not None
         and item.last_price <= item.target_price
     )
@@ -260,7 +273,10 @@ def web_check_item(item_id: int, session: Session = Depends(get_session)):
     item = services.get_item(session, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
-    services.check_item(session, item)
+    try:
+        services.check_item(session, item)
+    except services.CheckInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RedirectResponse(url=f"/items/{item_id}", status_code=303)
 
 
@@ -273,14 +289,19 @@ def web_update_item(
     active: str = Form("true"),
     session: Session = Depends(get_session),
 ):
-    updated = services.update_item(
-        session,
-        item_id,
-        target_price=_parse_float(target_price),
-        need_by=_parse_date(need_by),
-        interval_minutes=int(interval_minutes) if interval_minutes.strip() else 1440,
-        active=active == "true",
-    )
+    try:
+        updated = services.update_item(
+            session,
+            item_id,
+            target_price=_parse_float(target_price),
+            need_by=_parse_date(need_by),
+            interval_minutes=(
+                int(interval_minutes) if interval_minutes.strip() else 1440
+            ),
+            active=active == "true",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="item not found")
     return RedirectResponse(url=f"/items/{item_id}", status_code=303)
@@ -298,8 +319,8 @@ def web_assign_group(
     group_id: str = Form(""),
     session: Session = Depends(get_session),
 ):
-    gid = int(group_id) if group_id.strip() else None
     try:
+        gid = int(group_id) if group_id.strip() else None
         item = services.assign_item_to_group(session, item_id, gid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -496,7 +517,10 @@ def api_check_now(item_id: int, session: Session = Depends(get_session)):
     item = services.get_item(session, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="item not found")
-    return services.check_item(session, item)
+    try:
+        return services.check_item(session, item)
+    except services.CheckInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.delete("/api/items/{item_id}", status_code=204)

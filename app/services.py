@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import date, timedelta
 from difflib import SequenceMatcher
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlmodel import Session, col, or_, select
 
 from app.config import settings
@@ -28,6 +29,7 @@ from app.models import (
     current_month,
     utcnow,
 )
+from app.url_safety import normalize_public_url
 
 logger = logging.getLogger("pricemonitor.services")
 
@@ -36,13 +38,37 @@ class DuplicateItemError(ValueError):
     """Raised when adding a URL that's already tracked."""
 
 
+class CheckInProgressError(RuntimeError):
+    """Raised when another worker already holds an item's check lease."""
+
+
+MIN_INTERVAL_MINUTES = 5
+MAX_INTERVAL_MINUTES = 60 * 24 * 365
+MAX_URL_LENGTH = 4096
+MAX_GROUP_NAME_LENGTH = 200
+CHECK_LEASE_MINUTES = 10
+
+
+def _validate_optional_price(value: float | None, field: str) -> float | None:
+    if value is not None and (not math.isfinite(value) or value < 0):
+        raise ValueError(f"{field} must be a finite, non-negative number")
+    return value
+
+
+def _validate_interval(value: int | None) -> int:
+    interval = value if value is not None else settings.default_check_interval_minutes
+    if not MIN_INTERVAL_MINUTES <= interval <= MAX_INTERVAL_MINUTES:
+        raise ValueError(
+            f"interval_minutes must be between {MIN_INTERVAL_MINUTES} and "
+            f"{MAX_INTERVAL_MINUTES}"
+        )
+    return interval
+
+
 def normalize_url(url: str) -> str:
-    url = url.strip()
-    if not url:
-        raise ValueError("URL is empty")
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    return url
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError(f"URL must be at most {MAX_URL_LENGTH} characters")
+    return normalize_public_url(url)
 
 
 def _status_for(result: ExtractionResult) -> str:
@@ -84,6 +110,25 @@ def record_llm_call(
             item_id=item_id,
         )
     )
+
+
+def _acquire_check_lease(session: Session, item_id: int) -> bool:
+    now = utcnow()
+    expired = now - timedelta(minutes=CHECK_LEASE_MINUTES)
+    result = session.exec(
+        update(Item)
+        .where(
+            Item.id == item_id,
+            or_(Item.checking_since.is_(None), Item.checking_since < expired),
+        )
+        .values(checking_since=now)
+    )
+    session.commit()
+    return result.rowcount == 1
+
+
+def _release_check_lease(session: Session, item_id: int) -> None:
+    session.exec(update(Item).where(Item.id == item_id).values(checking_since=None))
     session.commit()
 
 
@@ -102,8 +147,22 @@ def llm_usage_summary(session: Session) -> dict:
     }
 
 
-def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePoint:
+def check_item(
+    session: Session, item: Item, *, use_llm: bool = True, acquire_lease: bool = True
+) -> PricePoint:
     """Fetch + extract the price for `item`, record a PricePoint, update `item`."""
+    if acquire_lease and not _acquire_check_lease(session, item.id):
+        raise CheckInProgressError("a check is already in progress for this item")
+    try:
+        return _check_item(session, item, use_llm=use_llm)
+    except Exception:
+        session.rollback()
+        if acquire_lease:
+            _release_check_lease(session, item.id)
+        raise
+
+
+def _check_item(session: Session, item: Item, *, use_llm: bool) -> PricePoint:
     # Gate the (paid) LLM fallback on availability and the monthly cap so a
     # miss never silently spends past the budget — it just fails to a status.
     allow_llm = use_llm and settings.llm_available and not llm_cap_reached(session)
@@ -140,8 +199,7 @@ def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePo
     item.next_check_at = now + timedelta(minutes=item.interval_minutes)
     if result.found:
         item.last_price = result.price
-        if result.currency and not item.currency:
-            item.currency = result.currency
+        item.currency = result.currency
         item.extraction_method = result.method
         item.extraction_hint = result.hint
     if result.title and not item.title:
@@ -164,6 +222,7 @@ def check_item(session: Session, item: Item, *, use_llm: bool = True) -> PricePo
             _refresh_group_matches(session, group)
 
     session.add(item)
+    item.checking_since = None
     session.commit()
     session.refresh(point)
     session.refresh(item)
@@ -189,6 +248,8 @@ def add_item(
 ) -> tuple[Item, PricePoint | None]:
     """Create a tracked item and (by default) do an immediate first check."""
     url = normalize_url(url)
+    target_price = _validate_optional_price(target_price, "target_price")
+    interval = _validate_interval(interval_minutes)
     existing = session.exec(select(Item).where(Item.url == url)).first()
     if existing is not None:
         raise DuplicateItemError(f"already tracking: {url}")
@@ -199,7 +260,7 @@ def add_item(
         url=url,
         target_price=target_price,
         need_by=need_by,
-        interval_minutes=interval_minutes or settings.default_check_interval_minutes,
+        interval_minutes=interval,
         next_check_at=utcnow(),
         group_id=group_id,
     )
@@ -246,9 +307,9 @@ def update_item(
     item = session.get(Item, item_id)
     if item is None:
         return None
-    item.target_price = target_price
+    item.target_price = _validate_optional_price(target_price, "target_price")
     item.need_by = need_by
-    item.interval_minutes = max(1, interval_minutes)
+    item.interval_minutes = _validate_interval(interval_minutes)
     item.active = active
     base = item.last_checked_at or utcnow()
     item.next_check_at = base + timedelta(minutes=item.interval_minutes)
@@ -372,6 +433,8 @@ def create_group(session: Session, name: str) -> ItemGroup:
     name = name.strip()
     if not name:
         raise ValueError("group name is empty")
+    if len(name) > MAX_GROUP_NAME_LENGTH:
+        raise ValueError(f"group name must be at most {MAX_GROUP_NAME_LENGTH} characters")
     group = ItemGroup(name=name)
     session.add(group)
     session.commit()
@@ -445,7 +508,9 @@ def group_summary(session: Session, group: ItemGroup) -> dict:
     priced = [
         m
         for m in members
-        if m.last_price is not None and m.match_status != MATCH_MISMATCH
+        if m.last_status == STATUS_OK
+        and m.last_price is not None
+        and m.match_status != MATCH_MISMATCH
     ]
     currencies = {m.currency for m in priced}
     cheapest = None
@@ -465,9 +530,11 @@ def group_summary(session: Session, group: ItemGroup) -> dict:
 
 def due_items(session: Session) -> list[Item]:
     now = utcnow()
+    expired = now - timedelta(minutes=CHECK_LEASE_MINUTES)
     stmt = select(Item).where(
         col(Item.active).is_(True),
         or_(col(Item.next_check_at).is_(None), Item.next_check_at <= now),
+        or_(col(Item.checking_since).is_(None), Item.checking_since < expired),
     )
     return list(session.exec(stmt).all())
 
@@ -478,6 +545,8 @@ def run_due_checks(session: Session) -> int:
     for item in items:
         try:
             check_item(session, item)
+        except CheckInProgressError:
+            logger.info("skipped item=%s; another check holds the lease", item.id)
         except Exception:  # noqa: BLE001 - one bad item shouldn't stop the sweep
             logger.exception("check failed for item=%s url=%s", item.id, item.url)
     if items:

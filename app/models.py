@@ -75,6 +75,9 @@ class Item(SQLModel, table=True):
     last_status: str | None = None
     last_checked_at: datetime | None = None
     next_check_at: datetime | None = None
+    # Short-lived lease preventing a manual check and scheduler sweep from
+    # fetching the same item simultaneously.
+    checking_since: datetime | None = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
 
