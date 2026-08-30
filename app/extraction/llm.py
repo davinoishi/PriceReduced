@@ -40,19 +40,26 @@ def reduce_page_text(html: str, max_chars: int) -> str:
     the price several times (price, per-unit, totals), while the page's first
     symbol is often a stray (currency selector, promo banner, add-on) that
     would anchor the window on the wrong region.
+
+    Every return path is stripped: a fully client-rendered page (no text at
+    all) still leaves the whitespace BETWEEN the elements we decompose, and
+    selectolax's `strip=True` strips per node, not across the joined result —
+    so the reduction of a 290KB JS-only page is `" "`, not `""`. A caller
+    testing the raw value for emptiness would treat that single space as page
+    text and pay to send it to the model.
     """
     tree = HTMLParser(html)
     for tag in tree.css("script, style, noscript, svg"):
         tag.decompose()
     body = tree.body or tree.root
     text = body.text(separator=" ", strip=True) if body else ""
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     if len(text) <= max_chars:
         return text
 
     positions = [m.start() for m in re.finditer(r"[$£€¥₹]", text)]
     if not positions:
-        return text[:max_chars]
+        return text[:max_chars].strip()
     lead = max_chars // 5  # keep some context before the first symbol
     best_start, best_count = max(0, positions[0] - lead), 1
     for pos in positions:
@@ -61,7 +68,7 @@ def reduce_page_text(html: str, max_chars: int) -> str:
         count = bisect_right(positions, end) - bisect_left(positions, start)
         if count > best_count:
             best_start, best_count = start, count
-    return text[best_start : best_start + max_chars]
+    return text[best_start : best_start + max_chars].strip()
 
 
 def _parse_response(content: str) -> tuple[float | None, str | None]:
@@ -92,7 +99,7 @@ def from_llm(html: str) -> ExtractionResult:
     result = ExtractionResult(method="llm", llm_model=settings.openrouter_model)
 
     text = reduce_page_text(html, settings.llm_max_input_chars)
-    if not text:
+    if not text.strip():
         result.error = "no page text to send to llm"
         return result  # llm_called stays False — nothing was spent
 
