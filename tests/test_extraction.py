@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from app.extraction import engine
 from app.extraction.engine import extract_from_html
-from app.extraction.llm import reduce_page_text
+from app.extraction import llm as llm_module
+from app.extraction.llm import from_llm, reduce_page_text
 from app.extraction.types import ExtractionResult
 
 JSON_LD_PAGE = """
@@ -279,3 +280,59 @@ def test_reduce_page_text_prefers_currency_cluster():
     reduced = reduce_page_text(html, max_chars=300)
     assert "$159.00" in reduced
     assert "Currency: $ CAD" not in reduced
+
+
+# A fully client-rendered page: every element we decompose is separated by
+# newlines, so the reduction is whitespace, not the empty string. Shape taken
+# from an Agoda property page (~290KB of HTML, zero server-rendered text).
+CLIENT_RENDERED_PAGE = """
+<html><body>
+<div id="root"></div>
+<script>window.__INITIAL_STATE__ = {"price": 1};</script>
+<noscript>
+</noscript>
+</body></html>
+"""
+
+
+def test_reduce_page_text_of_client_rendered_page_is_empty():
+    # Not merely falsy-ish: the old code returned " ", which is truthy, and a
+    # `if not text:` guard let it straight through to the model.
+    reduced = reduce_page_text(CLIENT_RENDERED_PAGE, max_chars=8000)
+    assert reduced == ""
+
+
+def test_reduce_page_text_window_is_stripped():
+    # The windowed slice starts `lead` chars before a currency symbol, which
+    # routinely lands mid-space; that padding is spent tokens.
+    html = (
+        "<html><body>"
+        + "filler word " * 200
+        + "  Widget $159.00 now  "
+        + " trailer word" * 200
+        + "</body></html>"
+    )
+    reduced = reduce_page_text(html, max_chars=300)
+    assert reduced == reduced.strip() and reduced
+
+
+def test_from_llm_does_not_call_model_on_whitespace_only_page(monkeypatch):
+    """The regression: one space reaching the model returns a fabricated price.
+
+    google/gemini-2.5-flash-lite answers a lone space with
+    {"price": 19.99, "currency": "$"} deterministically at temperature 0, so
+    `found` is True and `error` is empty — indistinguishable, at the caller,
+    from a real reading.
+    """
+
+    def unreachable(*args, **kwargs):
+        raise AssertionError("httpx.post called — the LLM was billed")
+
+    monkeypatch.setattr(llm_module.httpx, "post", unreachable)
+
+    result = from_llm(CLIENT_RENDERED_PAGE)
+
+    assert not result.llm_called  # nothing was spent
+    assert not result.found
+    assert result.price is None
+    assert result.error == "no page text to send to llm"
